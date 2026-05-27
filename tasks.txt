@@ -1,0 +1,16 @@
+任務一：下一拍（第 n 拍）的球種預測（參數名稱：actionId）
+評估指標 (
+)：Macro F1-Score
+理由：球種類別樣本高度不均衡。Macro F1-Score 給予所有類別相同的權重，以評估模型在各類球種（包括稀有球種）上的平均預測表現。
+任務二：下一拍（第 n 拍）的落點 (以九宮格分隔球桌區域) 預測（參數名稱：pointId）
+評估指標 (
+)：Macro F1-Score
+理由：不同落點區域的擊中頻率不一。Macro F1-Score提供在各區域間均衡的性能評估。
+任務三：根據此回合（Rally）已進行的擊球序列，預測最終此Rally的發球者是否得分。 (參數名稱：serverGetPoint)
+評估指標 (
+)：AUC-ROC (Area Under the ROC Curve)
+理由：AUC-ROC 衡量模型區分兩種結果的整體能力，不受特定分類閾值影響，並且在處理潛在類別不平衡時表現穩健。
+
+注意到，過度使用其中的洩漏資訊(serverGetPoint欄位)可能會造成模型過度擬合。
+舊版 test.csv 為 Reference_Only_Old_Test_Data 供參考使用。
+最終提交結果務必使用最新測試資料集 test_new.csv 進行預測。

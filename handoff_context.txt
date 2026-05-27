@@ -1,0 +1,126 @@
+HANDOFF CONTEXT
+===============
+
+USER REQUESTS (AS-IS)
+---------------------
+- hi, 我計畫針對dataset中的資料，進行根據前 n-1 拍的擊球資訊，預測下一拍的球種與落點，進而推論該回合的最終勝負。
+- 目標須遵循 tasks.txt
+- 使用tqdm 顯示進度
+- 留意到開發環境使用 RTX 4070 Laptop, 可加入對cuda 的支持
+- Q1：Sliding Window 的切割方式 ： 方案 A（密集監督）
+- Q2：serverGetPoint 的資訊洩漏處理 ：方案 A：serverGetPoint 完全不作為輸入特徵
+- Q3：Position Encoding 的選擇：：   方案 B：RoPE（Rotary Position Embedding）
+- Q4：Gradient Surgery 實作方式：方案 A：完整 PCGrad
+- Q5：Encoder 解凍策略（Encoder Unfreezing）  Layer-wise LR Decay（方案 A），後期發現不對的話再進行修正
+- Q6：模型規模： 方案 B：中等（建議）
+- Q7：測試集的預測目標：是
+- tqdm 還沒安裝
+- 協助配置 scikit-learn的 uv.lock
+- 輸出檔案名稱須加上時間戳
+- 可以加入tui and ascii 風格
+- 繼續完成工作階段
+- 把先前進度整理，準備將工作轉接給其他 agents
+- 把 handoff context 整理成為 txt file 並儲存到當前目錄
+
+GOAL
+----
+Continue implementing and verifying a CUDA-enabled RoPE Transformer multi-task learning pipeline for AI CUP table tennis rally prediction, then train/infer with timestamped submission output.
+
+WORK COMPLETED
+--------------
+- Inspected tasks.txt, label.txt, baseline code.py, and dataset structure.
+- Verified dataset files under dataset/AI CUP競賽資料集/: train.csv, test_new.csv, sample_submission.csv, and old reference test data.
+- Checked training data stats: 84,707 rows, 14,995 rallies, max rally length 52, avg rally length about 5.65, actionId 19 classes, pointId 10 classes, serverGetPoint near-balanced.
+- Checked test_new.csv: 5,668 rows, 1,845 rallies, avg rally length about 3.07.
+- Confirmed NVIDIA environment: RTX 4070 Laptop GPU, 8GB VRAM, NVIDIA driver 596.49, CUDA driver reports CUDA 13.2.
+- Updated pyproject.toml dependencies and uv sources for PyTorch CUDA cu128.
+- uv.lock was updated by uv sync.
+- Installed packages include torch 2.11.0+cu128, scikit-learn 1.8.0, tqdm 4.67.3, rich 15.0.0, pandas 3.0.3.
+- Created model/rope.py with RotaryEmbedding and apply_rotary_emb.
+- Created model/pcgrad.py with PCGrad gradient surgery wrapper.
+- Created data/dataset.py with dense sliding-window dataset and data/__init__.py.
+- Created model/transformer.py with shared encoder Transformer, RoPE attention, three task heads, and layer-wise LR groups; needs critical review because it was directly written by Atlas.
+
+CURRENT STATE
+-------------
+- Workspace is not a git repository; git status and git diff fail.
+- Todo state from system reminder: 1/8 completed, 7 remaining.
+- In-progress items: model/rope.py, model/transformer.py, model/pcgrad.py, data/dataset.py.
+- Pending items: train.py, inference.py, verify smoke test.
+- train.py and inference.py are not implemented yet.
+- End-to-end runtime verification has not passed yet.
+- Torch runtime import/CUDA verification should be rerun with a longer timeout.
+
+PENDING TASKS
+-------------
+- Verify model/rope.py with actual torch runtime shapes.
+- Verify model/pcgrad.py with a tiny multi-loss model.
+- Verify data/dataset.py by building train/val samples from a small subset of train.csv.
+- Critically review or re-delegate review/fix of model/transformer.py.
+- Implement train.py with argparse, rich/TUI ASCII banner, tqdm, CUDA support, train/val split, class weighting, losses, PCGrad, layer-wise LR decay, checkpointing, metrics.
+- Implement inference.py with checkpoint loading, test_new.csv encoding, prediction of last timestep next action/point and rally probability, timestamped CSV output.
+- Run smoke tests: imports, py_compile, forward pass, one short training run.
+- Update todo states after verification.
+
+KEY FILES
+---------
+- tasks.txt - defines required prediction tasks and metrics.
+- label.txt - explains dataset columns.
+- baseline code.py - original LSTM baseline and submission format reference.
+- pyproject.toml - updated uv dependencies and PyTorch CUDA index config.
+- uv.lock - updated by uv sync; includes CUDA PyTorch dependency resolution.
+- model/rope.py - RoPE implementation.
+- model/pcgrad.py - PCGrad gradient surgery wrapper.
+- model/transformer.py - shared encoder Transformer with RoPE and layer-wise LR groups; needs critical review.
+- data/dataset.py - dense sliding-window dataset builder.
+- dataset/AI CUP競賽資料集/test_new.csv - final test data required for submission.
+
+IMPORTANT DECISIONS
+-------------------
+- Sliding window strategy: dense supervision, one sample per prefix length t=1..N-1.
+- serverGetPoint must not be used as input feature; only as rally-level target.
+- Positional encoding: RoPE.
+- Multi-task architecture: shared Transformer encoder with actionId, pointId, serverGetPoint heads.
+- Gradient conflict handling: full PCGrad.
+- Encoder LR strategy: Layer-wise LR Decay.
+- Model size target: d_model=128, nhead=8, num_encoder_layers=4, FFN 512.
+- Test target interpretation: for each test rally, use observed sequence and predict next shot/action/point from last valid timestep.
+- Use test_new.csv, not old reference test.
+- Submission filename must include timestamp.
+- Include tqdm progress display and TUI/ASCII style.
+
+EXPLICIT CONSTRAINTS
+--------------------
+- 目標須遵循 tasks.txt
+- 使用tqdm 顯示進度
+- Q1：Sliding Window 的切割方式 ： 方案 A（密集監督）
+- Q2：serverGetPoint 的資訊洩漏處理 ：方案 A：serverGetPoint 完全不作為輸入特徵
+- Q3：Position Encoding 的選擇：：   方案 B：RoPE（Rotary Position Embedding）
+- Q4：Gradient Surgery 實作方式：方案 A：完整 PCGrad
+- Q5：Encoder 解凍策略（Encoder Unfreezing）  Layer-wise LR Decay（方案 A），後期發現不對的話再進行修正
+- Q6：模型規模： 方案 B：中等（建議）
+- Q7：測試集的預測目標：是
+- tqdm 還沒安裝
+- 協助配置 scikit-learn的 uv.lock
+- 輸出檔案名稱須加上時間戳
+- 可以加入tui and ascii 風格
+- 注意到，過度使用其中的洩漏資訊(serverGetPoint欄位)可能會造成模型過度擬合。
+- 舊版 test.csv 為 Reference_Only_Old_Test_Data 供參考使用。
+- 最終提交結果務必使用最新測試資料集 test_new.csv 進行預測。
+
+CONTEXT FOR CONTINUATION
+------------------------
+- Continue by verifying existing modules first, then implement train.py and inference.py.
+- Use Windows PowerShell and UNC path: \\mini\chsuiinx\Library\Mobile Documents\com~apple~CloudDocs\chsuiinx.code\aidea.com
+- Use workdir instead of changing directory inside shell commands when possible.
+- Sample submission file only has header row, so inference may need to construct output rows from test rally_uids directly.
+- Input features are sex, handId, strengthId, spinId, positionId, strikeId, scoreSelf, scoreOther, strikeNumber.
+- Excluded input features are serverGetPoint, actionId, pointId.
+- Expected metrics: actionId Macro F1, pointId Macro F1, serverGetPoint AUC-ROC.
+
+TO CONTINUE IN A NEW SESSION
+----------------------------
+1. Open a new OpenCode session.
+2. Paste this handoff context as the first message.
+3. Ask: Continue from the handoff context above. Finish verification, implement train.py and inference.py, then run a smoke test.
+<!-- OMO_INTERNAL_INITIATOR -->

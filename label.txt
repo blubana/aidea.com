@@ -1,0 +1,20 @@
+● rally_uid: 所有場次每一分獨立編號
+● match: 場次編號
+● numberGame: 每一場中的局數編號
+● rally_id: 每一局每一分編號
+● strikeNumber: 每一分中的拍次編號
+● sex: 性別
+● gamePlayerId: 此板的主視角的playerid(擊球者)
+● gamePlayerOtherId: 此板的主視角的對手的playerid(接球者)
+● scoreSelf: 主視角本局得分數
+● scoreOther: 主視角對手本局得分數
+● handId: 正反拍
+● strengthId: 速度
+● spinId: 旋轉
+● positionId: 選手初始站位，只在前兩板數值分別表示發球方跟接發球方的站位
+● strikeId: 發球 or 接發球 or 第三板之後
+● actionId: 球種(預測目標1)
+● pointId: 落點，注意這裡會根據接球方是左手持拍或右手持拍，落點數字表示
+的位置會不同，因為左右手的正手方向不同(預測目標2)
+● serverGetPoint: 發球者是否得分(預測目標3)
+

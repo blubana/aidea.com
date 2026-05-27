@@ -1,0 +1,157 @@
+{
+  "features": [
+    "sex",
+    "handId",
+    "strengthId",
+    "spinId",
+    "positionId",
+    "strikeId",
+    "scoreSelf",
+    "scoreOther",
+    "strikeNumber"
+  ],
+  "cats": {
+    "sex": [
+      1,
+      2
+    ],
+    "handId": [
+      0,
+      1,
+      2
+    ],
+    "strengthId": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "spinId": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "positionId": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "strikeId": [
+      1,
+      2,
+      4
+    ],
+    "scoreSelf": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "scoreOther": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "strikeNumber": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23
+    ]
+  },
+  "action_classes": [
+    0,
+    1,
+    2,
+    3,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    18
+  ],
+  "point_classes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "num_tokens_per_feature": [
+    3,
+    4,
+    5,
+    7,
+    5,
+    4,
+    15,
+    15,
+    24
+  ],
+  "maxlen": 23,
+  "model_kwargs": {
+    "d_model": 32,
+    "nhead": 4,
+    "num_encoder_layers": 2,
+    "dim_feedforward": 64,
+    "dropout": 0.1,
+    "emb_dim": 8
+  }
+}
