@@ -1,0 +1,40 @@
+{
+  "created_at": "2026-05-28T22:13:33",
+  "run_dir": "runs_smoke\\full_pipeline",
+  "artifacts": [
+    "runs_smoke\\full_pipeline\\checkpoints_transformer\\best_transformer_20260528_221320.pt",
+    "runs_smoke\\full_pipeline\\checkpoints_lstm\\best_transformer_20260528_221327.pt",
+    "runs_smoke\\full_pipeline\\checkpoints_lightgbm\\tabular_lightgbm_20260528_221332.pkl"
+  ],
+  "args": {
+    "run_dir": "runs_smoke\\full_pipeline",
+    "device": "cpu",
+    "epochs": 1,
+    "batch": 8,
+    "cv_folds": 1,
+    "limit_rallies": 60,
+    "val_target_from_end": 2,
+    "sequence_feature_set": "base",
+    "tabular_feature_set": "enhanced",
+    "action_loss_weight": 0.35,
+    "point_loss_weight": 0.55,
+    "rally_loss_weight": 0.1,
+    "selection_metric": "action_point_score",
+    "class_weight_mode": "sqrt",
+    "label_smoothing": 0.0,
+    "early_stopping_patience": 8,
+    "transformer_d_model": 128,
+    "transformer_layers": 4,
+    "transformer_ffn": 512,
+    "lstm_d_model": 128,
+    "lstm_layers": 2,
+    "tabular_window": 8,
+    "tabular_max_iter": 5,
+    "no_plots": true,
+    "skip_transformer": false,
+    "skip_lstm": false,
+    "skip_lightgbm": false,
+    "skip_validation": false,
+    "skip_inference": true
+  }
+}
