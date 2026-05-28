@@ -124,6 +124,7 @@ def make_model(backend: str, task: str, seed: int, max_iter: int):
         learning_rate=0.05,
         max_leaf_nodes=31,
         l2_regularization=0.01,
+        early_stopping=False,
         random_state=seed,
     )
 

@@ -10,6 +10,8 @@ dependencies = [
     "tqdm>=4.67.0",
     "rich>=13.9.0",
     "seaborn>=0.13.0",
+    "lightgbm>=4.6.0",
+    "catboost>=1.2.10",
 ]
 
 [tool.uv.sources]
