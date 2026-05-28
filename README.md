@@ -68,7 +68,7 @@ Do not use `--val-target-from-end 1` for model selection unless you are intentio
 Select with:
 
 ```text
---feature-set base|score|enhanced
+--feature-set base|score|enhanced|semantic
 ```
 
 Available presets:
@@ -85,15 +85,46 @@ score:
 enhanced:
   score features plus actionPointCombo, spinStrengthCombo,
   lastActionId, lastPointId, lastStrikeId, lastPositionId
+
+semantic:
+  enhanced features plus table-tennis-aware role and pattern features:
+  currentHitterIsServer, serverScore, receiverScore, serverScoreDiff,
+  serverPosition, receiverPosition, pointDepth, pointLane, actionType,
+  serve/receive action-point patterns, and third-ball/shot-phase flags
 ```
 
 Recommended starting point:
 
 ```text
---feature-set base
+--feature-set semantic
 ```
 
-Then try `score`, and only use `enhanced` if validation confirms it helps.
+Use `base` when you want a clean low-variance baseline. Use `semantic` when
+training the main Transformer/LSTM/LightGBM ensemble.
+
+## Checkpoint Organization
+
+Experiment outputs are kept under one checkpoint root:
+
+```text
+checkpoints/
+  runs/
+    checkpoints_transformer_base_v2/
+    checkpoints_gru_base_v2/
+    checkpoints_tabular_enhanced_v2/
+```
+
+For new experiments, prefer:
+
+```powershell
+--out-dir checkpoints\runs\<experiment_name>
+```
+
+Inference can scan the full tree:
+
+```powershell
+uv run python inference.py --checkpoint-dir checkpoints --recursive --checkpoint-glob best_transformer_*.pt
+```
 
 ## Install / Environment
 

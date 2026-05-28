@@ -265,7 +265,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", default="dataset/AI CUP競賽資料集")
     parser.add_argument("--train", default="")
     parser.add_argument("--out-dir", default="checkpoints_tabular")
-    parser.add_argument("--feature-set", choices=("base", "score", "enhanced"), default="score")
+    parser.add_argument("--feature-set", choices=("base", "score", "enhanced", "semantic"), default="semantic")
     parser.add_argument("--backend", choices=("auto", "lightgbm", "catboost", "sklearn"), default="auto")
     parser.add_argument("--window", type=int, default=6)
     parser.add_argument("--max-iter", type=int, default=300)

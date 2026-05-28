@@ -45,12 +45,50 @@ ENHANCED_FEATURES = [
     "strikeNumber",
 ]
 
+SEMANTIC_FEATURES = [
+    *ENHANCED_FEATURES[:-1],
+    "currentHitterIsServer",
+    "serverScore",
+    "receiverScore",
+    "serverScoreDiff",
+    "serverScoreDiffBucket",
+    "serverIsLeading",
+    "serverPosition",
+    "receiverPosition",
+    "serveReceivePositionCombo",
+    "shotPhase",
+    "isThirdBall",
+    "pointDepth",
+    "pointLane",
+    "lastPointDepth",
+    "lastPointLane",
+    "pointDepthTransition",
+    "pointLaneTransition",
+    "actionType",
+    "lastActionType",
+    "actionTypeTransition",
+    "serveActionId",
+    "serveSpinId",
+    "servePointId",
+    "servePointDepth",
+    "servePointLane",
+    "receiveActionId",
+    "receivePointId",
+    "receivePointDepth",
+    "receivePointLane",
+    "serveReceiveActionCombo",
+    "serveReceivePointCombo",
+    "serveSpinPointCombo",
+    "strikeNumber",
+]
+
 FEATURE_SETS = {
     "base": BASE_FEATURES,
     "score": SCORE_FEATURES,
     "enhanced": ENHANCED_FEATURES,
+    "semantic": SEMANTIC_FEATURES,
 }
-FEATURES = ENHANCED_FEATURES
+FEATURES = SEMANTIC_FEATURES
 
 PAD_TOKEN = 0
 UNK_TOKEN = 1
@@ -62,6 +100,73 @@ def resolve_features(feature_set: str = "enhanced") -> list[str]:
         valid = ", ".join(sorted(FEATURE_SETS))
         raise ValueError(f"Unknown feature_set={feature_set!r}; valid options: {valid}")
     return list(FEATURE_SETS[feature_set])
+
+
+def _rally_order(df: pd.DataFrame) -> pd.Series:
+    if "rally_uid" not in df.columns:
+        return pd.Series(np.arange(len(df)), index=df.index)
+    return df.groupby("rally_uid", sort=False).cumcount()
+
+
+def _first_value(df: pd.DataFrame, col: str, default: int = 0) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series(default, index=df.index)
+    if "rally_uid" not in df.columns:
+        return df[col].fillna(default)
+    return df.groupby("rally_uid", sort=False)[col].transform("first").fillna(default)
+
+
+def _nth_value_causal(df: pd.DataFrame, col: str, n: int, default: int = 0) -> pd.Series:
+    """Broadcast the nth rally value only to rows where that shot is already known."""
+    if col not in df.columns:
+        return pd.Series(default, index=df.index)
+    if "rally_uid" not in df.columns:
+        value = df[col].iloc[n] if len(df) > n else default
+        return pd.Series(np.where(np.arange(len(df)) >= n, value, default), index=df.index)
+    order = _rally_order(df)
+    nth = df.groupby("rally_uid", sort=False)[col].transform(lambda s: s.iloc[n] if len(s) > n else default)
+    return pd.Series(np.where(order >= n, nth, default), index=df.index).fillna(default)
+
+
+def _point_depth(point: pd.Series) -> pd.Series:
+    point = point.fillna(0).astype(int)
+    return pd.Series(
+        np.select(
+            [point.between(1, 3), point.between(4, 6), point.between(7, 9)],
+            [1, 2, 3],
+            default=0,
+        ),
+        index=point.index,
+    )
+
+
+def _point_lane(point: pd.Series) -> pd.Series:
+    point = point.fillna(0).astype(int)
+    return pd.Series(
+        np.select(
+            [point.isin([1, 4, 7]), point.isin([2, 5, 8]), point.isin([3, 6, 9])],
+            [1, 2, 3],
+            default=0,
+        ),
+        index=point.index,
+    )
+
+
+def _action_type(action: pd.Series) -> pd.Series:
+    action = action.fillna(0).astype(int)
+    return pd.Series(
+        np.select(
+            [
+                action.between(1, 7),
+                action.between(8, 11),
+                action.between(12, 14),
+                action.between(15, 18),
+            ],
+            [1, 2, 3, 4],
+            default=0,
+        ),
+        index=action.index,
+    )
 
 
 class RallyDataset(Dataset):
@@ -84,6 +189,11 @@ def feature_values(df: pd.DataFrame, col: str) -> pd.Series:
     score_other = df["scoreOther"].clip(0, 30)
     score_diff = (score_self - score_other).clip(-30, 30)
     score_total = (score_self + score_other).clip(0, 60)
+    server_player = _first_value(df, "gamePlayerId")
+    current_is_server = (df["gamePlayerId"].fillna(-1).astype(int) == server_player.astype(int)).astype(int)
+    server_score = pd.Series(np.where(current_is_server == 1, score_self, score_other), index=df.index).clip(0, 30)
+    receiver_score = pd.Series(np.where(current_is_server == 1, score_other, score_self), index=df.index).clip(0, 30)
+    server_score_diff = (server_score - receiver_score).clip(-30, 30)
 
     if col == "strikeNumber":
         return df[col].clip(0, 50)
@@ -143,6 +253,105 @@ def feature_values(df: pd.DataFrame, col: str) -> pd.Series:
         return df["actionId"].clip(0, 99) * 100 + df["pointId"].clip(0, 99)
     if col == "spinStrengthCombo":
         return df["spinId"].clip(0, 99) * 100 + df["strengthId"].clip(0, 99)
+    if col == "currentHitterIsServer":
+        return current_is_server
+    if col == "serverScore":
+        return server_score
+    if col == "receiverScore":
+        return receiver_score
+    if col == "serverScoreDiff":
+        return server_score_diff + 30
+    if col == "serverScoreDiffBucket":
+        return pd.Series(
+            np.select(
+                [
+                    server_score_diff <= -5,
+                    server_score_diff.between(-4, -2),
+                    server_score_diff == -1,
+                    server_score_diff == 0,
+                    server_score_diff == 1,
+                    server_score_diff.between(2, 4),
+                    server_score_diff >= 5,
+                ],
+                [0, 1, 2, 3, 4, 5, 6],
+                default=3,
+            ),
+            index=df.index,
+        )
+    if col == "serverIsLeading":
+        return (server_score > receiver_score).astype(int)
+    if col == "serverPosition":
+        return _nth_value_causal(df, "positionId", 0).clip(0, 9)
+    if col == "receiverPosition":
+        return _nth_value_causal(df, "positionId", 1).clip(0, 9)
+    if col == "serveReceivePositionCombo":
+        return _nth_value_causal(df, "positionId", 0).clip(0, 9) * 10 + _nth_value_causal(df, "positionId", 1).clip(0, 9)
+    if col == "shotPhase":
+        strike_number = df["strikeNumber"].clip(0, 50)
+        return pd.Series(
+            np.select(
+                [
+                    strike_number == 1,
+                    strike_number == 2,
+                    strike_number == 3,
+                    strike_number.between(4, 5),
+                    strike_number >= 6,
+                ],
+                [1, 2, 3, 4, 5],
+                default=0,
+            ),
+            index=df.index,
+        )
+    if col == "isThirdBall":
+        return (df["strikeNumber"] == 3).astype(int)
+    if col == "pointDepth":
+        return _point_depth(df["pointId"])
+    if col == "pointLane":
+        return _point_lane(df["pointId"])
+    if col == "lastPointDepth":
+        last_point = df.groupby("rally_uid", sort=False)["pointId"].shift(1).fillna(0) if "rally_uid" in df.columns else df["pointId"].shift(1).fillna(0)
+        return _point_depth(last_point)
+    if col == "lastPointLane":
+        last_point = df.groupby("rally_uid", sort=False)["pointId"].shift(1).fillna(0) if "rally_uid" in df.columns else df["pointId"].shift(1).fillna(0)
+        return _point_lane(last_point)
+    if col == "pointDepthTransition":
+        last_point = df.groupby("rally_uid", sort=False)["pointId"].shift(1).fillna(0) if "rally_uid" in df.columns else df["pointId"].shift(1).fillna(0)
+        return _point_depth(last_point) * 10 + _point_depth(df["pointId"])
+    if col == "pointLaneTransition":
+        last_point = df.groupby("rally_uid", sort=False)["pointId"].shift(1).fillna(0) if "rally_uid" in df.columns else df["pointId"].shift(1).fillna(0)
+        return _point_lane(last_point) * 10 + _point_lane(df["pointId"])
+    if col == "actionType":
+        return _action_type(df["actionId"])
+    if col == "lastActionType":
+        last_action = df.groupby("rally_uid", sort=False)["actionId"].shift(1).fillna(0) if "rally_uid" in df.columns else df["actionId"].shift(1).fillna(0)
+        return _action_type(last_action)
+    if col == "actionTypeTransition":
+        last_action = df.groupby("rally_uid", sort=False)["actionId"].shift(1).fillna(0) if "rally_uid" in df.columns else df["actionId"].shift(1).fillna(0)
+        return _action_type(last_action) * 10 + _action_type(df["actionId"])
+    if col == "serveActionId":
+        return _nth_value_causal(df, "actionId", 0).clip(0, 99)
+    if col == "serveSpinId":
+        return _nth_value_causal(df, "spinId", 0).clip(0, 99)
+    if col == "servePointId":
+        return _nth_value_causal(df, "pointId", 0).clip(0, 99)
+    if col == "servePointDepth":
+        return _point_depth(_nth_value_causal(df, "pointId", 0))
+    if col == "servePointLane":
+        return _point_lane(_nth_value_causal(df, "pointId", 0))
+    if col == "receiveActionId":
+        return _nth_value_causal(df, "actionId", 1).clip(0, 99)
+    if col == "receivePointId":
+        return _nth_value_causal(df, "pointId", 1).clip(0, 99)
+    if col == "receivePointDepth":
+        return _point_depth(_nth_value_causal(df, "pointId", 1))
+    if col == "receivePointLane":
+        return _point_lane(_nth_value_causal(df, "pointId", 1))
+    if col == "serveReceiveActionCombo":
+        return _nth_value_causal(df, "actionId", 0).clip(0, 99) * 100 + _nth_value_causal(df, "actionId", 1).clip(0, 99)
+    if col == "serveReceivePointCombo":
+        return _nth_value_causal(df, "pointId", 0).clip(0, 99) * 100 + _nth_value_causal(df, "pointId", 1).clip(0, 99)
+    if col == "serveSpinPointCombo":
+        return _nth_value_causal(df, "spinId", 0).clip(0, 99) * 100 + _nth_value_causal(df, "pointId", 0).clip(0, 99)
     if col.startswith("last"):
         raw_col = col[4].lower() + col[5:]
         if raw_col not in df.columns:

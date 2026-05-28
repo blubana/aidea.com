@@ -18,7 +18,6 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from data.dataset import (
-    FEATURES,
     IGNORE_INDEX,
     build_datasets,
     build_submission_like_dataset,
@@ -585,7 +584,7 @@ def main(args: argparse.Namespace) -> None:
         keep = train_df["rally_uid"].drop_duplicates().head(args.limit_rallies)
         train_df = train_df[train_df["rally_uid"].isin(keep)].copy()
 
-    if "serverGetPoint" in FEATURES:
+    if "serverGetPoint" in resolve_features(args.feature_set):
         raise ValueError("serverGetPoint must not be included in FEATURES because it leaks the target.")
 
     rally_labels = train_df.groupby("rally_uid", sort=False)["serverGetPoint"].first()
@@ -623,7 +622,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", default="dataset/AI CUP競賽資料集")
     parser.add_argument("--train", default="")
     parser.add_argument("--out-dir", default="checkpoints")
-    parser.add_argument("--feature-set", choices=("base", "score", "enhanced"), default="enhanced")
+    parser.add_argument("--feature-set", choices=("base", "score", "enhanced", "semantic"), default="semantic")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch", type=int, default=128)
     parser.add_argument("--workers", type=int, default=0)
