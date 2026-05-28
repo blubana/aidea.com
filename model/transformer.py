@@ -150,11 +150,13 @@ class RallyTransformer(nn.Module):
         dropout: float = 0.1,
         max_seq_len: int = 64,
         emb_dim: int = 32,
+        rally_pool: str = "last_mean_mlp",
     ) -> None:
         super().__init__()
 
         self.d_model = d_model
         self.num_encoder_layers = num_encoder_layers
+        self.rally_pool = rally_pool
         num_features = len(num_tokens_per_feature)
 
         # One embedding table per feature; padding_idx=0 maps to zero vector
@@ -186,7 +188,17 @@ class RallyTransformer(nn.Module):
         # Task heads
         self.action_head = nn.Linear(d_model, n_act)
         self.point_head  = nn.Linear(d_model, n_pt)
-        self.rally_head  = nn.Linear(d_model, 1)
+        if rally_pool == "mean_linear":
+            self.rally_head = nn.Linear(d_model, 1)
+        elif rally_pool == "last_mean_mlp":
+            self.rally_head = nn.Sequential(
+                nn.Linear(d_model * 2, d_model),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_model, 1),
+            )
+        else:
+            raise ValueError(f"Unsupported rally_pool={rally_pool!r}")
 
         self._init_weights()
 
@@ -254,11 +266,17 @@ class RallyTransformer(nn.Module):
         logits_action = self.action_head(x)       # [B, T, n_act]
         logits_point  = self.point_head(x)        # [B, T, n_pt]
 
-        # Rally head: mean-pool over non-padding positions
+        # Rally head: combine global context with the final observed strike.
         non_pad = (~pad_mask).float().unsqueeze(-1)          # [B, T, 1]
         denom   = non_pad.sum(dim=1).clamp(min=1.0)         # [B, 1]
         mean_h  = (x * non_pad).sum(dim=1) / denom          # [B, d_model]
-        logit_rally = self.rally_head(mean_h).squeeze(-1)    # [B]
+        if self.rally_pool == "mean_linear":
+            rally_h = mean_h
+        else:
+            last_idx = (lengths - 1).clamp_min(0).view(B, 1, 1).expand(B, 1, self.d_model)
+            last_h = x.gather(1, last_idx).squeeze(1)
+            rally_h = torch.cat([last_h, mean_h], dim=-1)
+        logit_rally = self.rally_head(rally_h).squeeze(-1)    # [B]
 
         return logits_action, logits_point, logit_rally
 

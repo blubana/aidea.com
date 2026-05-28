@@ -35,7 +35,7 @@ class PCGrad:
     def step(self) -> None:
         self._optim.step()
 
-    def pc_backward(self, losses: list[torch.Tensor]) -> None:
+    def pc_backward(self, losses: list[torch.Tensor], retain_graph: bool = False) -> None:
         """Backpropagate multiple task losses with PCGrad projection.
 
         Steps:
@@ -58,8 +58,8 @@ class PCGrad:
         self.zero_grad()
 
         for i, loss in enumerate(losses):
-            retain_graph = i < (self._task_num - 1)
-            loss.backward(retain_graph=retain_graph)
+            keep_graph = retain_graph or i < (self._task_num - 1)
+            loss.backward(retain_graph=keep_graph)
 
             grads_for_task: list[torch.Tensor] = []
             for p in trainable_params:
