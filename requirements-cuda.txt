@@ -1,0 +1,7 @@
+# Install this after requirements-base.txt.
+# The local NVIDIA driver reports CUDA 13.2 support. PyTorch wheels bundle their
+# own CUDA runtime, so the stable cu130 wheel is appropriate on this driver.
+--index-url https://download.pytorch.org/whl/cu130
+torch
+torchvision
+torchaudio

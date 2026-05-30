@@ -1,0 +1,507 @@
+# AIDEA Table-Tennis Rally Prediction
+
+This repository builds a reproducible machine-learning pipeline for predicting
+three targets per `rally_uid`:
+
+- `actionId`: next-stroke action class, 19 classes `0..18`; objective Macro F1
+- `pointId`: next-stroke landing-point class, 10 classes `0..9`; objective Macro F1
+- `serverGetPoint`: rally outcome from the server perspective, binary `0/1`; objective ROC AUC
+
+The current strategy is to train one independent model per target first. This is
+intentional because `actionId` and `pointId` are next-stroke prediction tasks,
+while `serverGetPoint` is a rally-outcome task. Independent models are easier to
+debug, validate, tune, and later ensemble.
+
+## Current roadmap
+
+```text
+EDA
+→ EDA visualization
+→ prefix builder
+→ feature generator
+→ feature visualization / sanity checks
+→ tabular baseline + validation
+→ first submission
+→ LSTM dataset
+→ independent LSTM models
+→ compare with baseline
+→ simple ensemble validation
+→ stacking / auxiliary tasks / tuning
+```
+
+## Environment
+
+The recommended environment manager is `uv`.
+
+```powershell
+uv python install 3.12
+uv venv --python 3.12
+uv sync
+```
+
+The project is configured to install PyTorch CUDA wheels from the `cu130` index.
+The local machine has an NVIDIA RTX 4070 Laptop GPU, and CUDA is available with:
+
+```text
+torch 2.12.0+cu130
+cuda available: True
+```
+
+## Reproduction
+
+### 1. Generate EDA reports
+
+```powershell
+uv run python src\eda_dataset.py
+```
+
+Outputs:
+
+```text
+reports/eda_summary.txt
+reports/train_rally_length_distribution.csv
+reports/test_prefix_length_distribution.csv
+reports/train_actionId_distribution.csv
+reports/train_pointId_distribution.csv
+reports/train_serverGetPoint_distribution.csv
+reports/action_by_next_strikeNumber.csv
+reports/point_by_next_strikeNumber.csv
+reports/train_match_rally_counts.csv
+```
+
+### 2. Generate EDA visualizations
+
+```powershell
+uv run python src\visualize_eda.py
+```
+
+Outputs figures under:
+
+```text
+reports/figures/
+```
+
+### 3. Build prefix feature datasets
+
+```powershell
+uv run python src\build_prefix_dataset.py --max-prefix-len 12
+```
+
+Outputs:
+
+```text
+data/processed/prefix_train_features.csv
+data/processed/prefix_test_features.csv
+```
+
+Current generated dataset sizes:
+
+```text
+prefix_train_features.csv: 65,790 rows, 228 columns
+prefix_test_features.csv: 1,845 rows, 225 columns
+```
+
+The train file has three additional label columns:
+
+```text
+label_actionId
+label_pointId
+label_serverGetPoint
+```
+
+### 4. Train tabular baselines with grouped validation
+
+```powershell
+uv run python src\train_tabular_baseline.py --folds 5 --n-estimators 300 --max-depth 18 --min-samples-leaf 2 --group-col match
+```
+
+Outputs:
+
+```text
+models/tabular_baseline/actionId_extratrees.joblib
+models/tabular_baseline/pointId_extratrees.joblib
+models/tabular_baseline/serverGetPoint_extratrees.joblib
+
+reports/tabular_baseline/summary.json
+reports/tabular_baseline/*_fold_metrics.csv
+reports/tabular_baseline/*_oof_predictions.csv
+reports/tabular_baseline/*_oof_proba.npy
+```
+
+### 5. Build the LSTM dataset
+
+```powershell
+uv run python src\lstm_dataset.py --max-len 12
+```
+
+Output:
+
+```text
+data/processed/lstm_dataset.npz
+```
+
+The NPZ contains:
+
+```text
+X_cat_seq:      (65,790, 12, 10), int64
+X_num_seq:      (65,790, 12, 10), float32
+X_manual:       (65,790, 214), float32
+lengths:        (65,790,), int64
+
+test_X_cat_seq: (1,845, 12, 10), int64
+test_X_num_seq: (1,845, 12, 10), float32
+test_X_manual:  (1,845, 214), float32
+test_lengths:   (1,845,), int64
+```
+
+Sequence construction details:
+
+- Each train sample uses `prefix strokes 1..k` from its `sample_id = rally_uid_k`.
+- Each test sample uses all known rows for that `rally_uid`.
+- If a prefix is longer than `max_len`, the most recent `max_len` strokes are kept.
+- If a prefix is longer than `max_len`, the most recent `max_len` strokes are kept.
+- Valid timesteps are placed first and right-padded with zeros, so PyTorch
+  `pack_padded_sequence` reads real strokes before padding.
+
+Step-level categorical features:
+
+```text
+sex, gamePlayerId, gamePlayerOtherId, strikeId, handId, strengthId,
+spinId, pointId, actionId, positionId
+```
+
+Step-level numeric features:
+
+```text
+strikeNumber, scoreSelf, scoreOther, score_diff, score_sum,
+is_odd_stroke, is_serve_stroke, is_receive_stroke,
+is_third_ball, is_rally_phase
+```
+
+### 6. Train independent LSTM models
+
+Smoke-test commands:
+
+```powershell
+uv run python src\train_lstm.py --target actionId --epochs 1 --sample 1024 --max-folds 1 --batch-size 128 --hidden-size 32
+uv run python src\train_lstm.py --target pointId --epochs 1 --sample 1024 --max-folds 1 --batch-size 128 --hidden-size 32
+uv run python src\train_lstm.py --target serverGetPoint --epochs 1 --sample 1024 --max-folds 1 --batch-size 128 --hidden-size 32
+```
+
+Objective-aligned baseline commands:
+
+```powershell
+uv run python src\train_lstm.py --target actionId --preset action
+uv run python src\train_lstm.py --target pointId --preset point
+uv run python src\train_lstm.py --target serverGetPoint --preset server --no-use-sample-weight
+```
+
+Outputs:
+
+```text
+models/lstm/<target>_fold*.pt
+reports/lstm/<target>_metrics.json
+reports/lstm/<target>_oof_proba.npy
+reports/lstm/<target>_oof_predictions.csv
+```
+
+The current LSTM trainer uses:
+
+- CUDA if available
+- `GroupKFold` by match
+- `AdamW`
+- gradient clipping
+- objective-aligned early stopping by default:
+  - `actionId`: Macro F1
+  - `pointId`: Macro F1
+  - `serverGetPoint`: ROC AUC
+- class-weighted cross entropy for `actionId` and `pointId`
+- binary cross entropy for `serverGetPoint`
+- optional per-sample weights from test prefix-length distribution
+- train-fold standardization for `X_manual` and valid timesteps in `X_num_seq`
+
+Preset examples:
+
+```powershell
+uv run python src\train_lstm.py --target actionId --preset action
+uv run python src\train_lstm.py --target pointId --preset point
+uv run python src\train_lstm.py --target serverGetPoint --preset server --no-use-sample-weight
+```
+
+### 7. Create tabular-baseline submission
+
+```powershell
+uv run python src\predict_tabular_submission.py
+```
+
+Output:
+
+```text
+submissions/submission_tabular_baseline.csv
+```
+
+### 8. Validate a simple tabular + LSTM ensemble
+
+```powershell
+uv run python src\ensemble_validation.py
+```
+
+Outputs:
+
+```text
+reports/ensemble/summary.csv
+reports/ensemble/summary.json
+```
+
+## Random seed and reproducibility
+
+The tabular and LSTM scripts use a default seed:
+
+```text
+--random-state 42
+```
+
+This seed is applied to:
+
+- global NumPy random state
+- optional debug row sampling
+- `ExtraTreesClassifier(random_state=42)`
+- PyTorch CPU seed
+- PyTorch CUDA seed when CUDA is available
+
+`GroupKFold` itself is deterministic and does not shuffle groups.
+
+For an exact rerun, use the same command-line arguments, the same generated
+prefix feature files, and the same dependency versions from `uv.lock`.
+
+## Current baseline results
+
+Validation split:
+
+```text
+GroupKFold by match, 5 folds
+```
+
+Model:
+
+```text
+ExtraTreesClassifier
+n_estimators = 300
+max_depth = 18
+min_samples_leaf = 2
+class_weight = balanced
+random_state = 42
+```
+
+Out-of-fold results:
+
+| Target | Accuracy | Macro F1 | Log Loss |
+|---|---:|---:|---:|
+| `actionId` | 0.46349 | 0.31743 | 1.59867 |
+| `pointId` | 0.27066 | 0.19617 | 1.88638 |
+| `serverGetPoint` | 0.56825 | 0.56736 | 0.67629 |
+
+## Current LSTM status
+
+Implemented files:
+
+```text
+src/lstm_dataset.py
+src/models_lstm.py
+src/train_lstm.py
+```
+
+Smoke tests have passed on CUDA for all three targets with:
+
+```text
+--epochs 1 --sample 1024 --max-folds 1 --batch-size 128 --hidden-size 32
+```
+
+Full validation has also been run with:
+
+```powershell
+uv run python src\train_lstm.py --target actionId --epochs 30 --batch-size 256 --hidden-size 128 --num-layers 1 --dropout 0.2
+uv run python src\train_lstm.py --target pointId --epochs 30 --batch-size 256 --hidden-size 128 --num-layers 1 --dropout 0.2
+uv run python src\train_lstm.py --target serverGetPoint --epochs 30 --batch-size 256 --hidden-size 128 --num-layers 1 --dropout 0.2
+```
+
+Validation split:
+
+```text
+GroupKFold by match, 5 folds
+```
+
+Full LSTM out-of-fold fold-average results:
+
+| Target | Accuracy | Macro F1 | Log Loss | ROC AUC |
+|---|---:|---:|---:|---:|
+| `actionId` | 0.39398 | 0.29964 | 2.30651 | — |
+| `pointId` | 0.23118 | 0.17471 | 2.40484 | — |
+| `serverGetPoint` | 0.52576 | 0.52338 | 4.61164 | 0.52903 |
+
+Current conclusion:
+
+- The first LSTM baseline is functional but weaker than the tabular baseline.
+- Do not use this raw LSTM as the primary model yet.
+- The next LSTM work should focus on calibration, early stopping, better manual
+  feature normalization, target-specific losses, and ensemble testing.
+
+## Generated feature groups
+
+The feature generator currently creates the following groups.
+
+### Rally prefix length features
+
+- `prefix_len`
+- `log_prefix_len`
+- `is_short_prefix`
+- `is_medium_prefix`
+- `is_long_prefix`
+
+### Next-stroke position features
+
+- `next_strikeNumber`
+- `next_is_receive`
+- `next_is_third_ball`
+- `next_is_rally_phase`
+- `next_is_odd`
+
+### Last-N stroke features
+
+For `last1` through `last5`:
+
+- `strikeId`
+- `handId`
+- `strengthId`
+- `spinId`
+- `pointId`
+- `actionId`
+- `positionId`
+- `gamePlayerId`
+- `gamePlayerOtherId`
+- derived `action_group`
+- derived `point_depth`
+- derived `point_side`
+
+### Action group features
+
+`actionId` is mapped into:
+
+- `zero`
+- `attack`
+- `control`
+- `defensive`
+- `serve`
+- `unknown`
+
+The pipeline creates count and ratio features for each group.
+
+### Point decomposition features
+
+`pointId` is decomposed into:
+
+- depth: none / short / half-long / long
+- side: none / forehand / middle / backhand
+
+The pipeline creates count and ratio features for depth and side.
+
+### Score state features
+
+- `scoreSelf`
+- `scoreOther`
+- `score_diff`
+- `score_sum`
+- `abs_score_diff`
+- `is_deuce`
+- `is_close_score`
+- `is_self_leading`
+- `is_other_leading`
+
+### Player turn features
+
+- `last_hitter_id`
+- `last_opponent_id`
+- `next_hitter_is_initial_server_side`
+
+### Error / terminal proxy features
+
+- `last_action_is_zero`
+- `last_point_is_zero`
+- `has_zero_action`
+- `has_zero_point`
+
+### Prefix count and ratio features
+
+For the observed prefix, the generator also creates class counts and ratios for:
+
+- `actionId`
+- `pointId`
+- `strikeId`
+- `handId`
+- `strengthId`
+- `spinId`
+- `positionId`
+
+## Notes
+
+- Do not use random row split. Use grouped validation by `match` or `rally_uid`.
+- The stricter default is `GroupKFold` by `match`, because train and test have no
+  match overlap.
+- The reference-only old test data should not be used for official validation or
+  training because it has leakage risk.
+
+## Objective-aligned optimization update
+
+The highest-level validation objectives are now:
+
+```text
+actionId: maximize Macro F1
+pointId: maximize Macro F1
+serverGetPoint: maximize ROC AUC
+```
+
+The LSTM trainer now supports objective-aligned early stopping:
+
+```powershell
+uv run python src\train_lstm.py --target actionId --preset action
+uv run python src\train_lstm.py --target pointId --preset point
+uv run python src\train_lstm.py --target serverGetPoint --preset server --no-use-sample-weight
+```
+
+Implementation details:
+
+- `actionId` and `pointId` checkpoints are selected by validation Macro F1.
+- `serverGetPoint` checkpoints are selected by validation ROC AUC.
+- Manual features and sequence numeric features are standardized per fold.
+- The LSTM manual-feature BatchNorm layer was removed to avoid double
+  normalization and unstable early validation.
+- LSTM OOF probabilities are exported for ensemble validation.
+
+Metric-based ensemble validation:
+
+```powershell
+uv run python src\ensemble_validation.py
+```
+
+Current OOF ensemble results:
+
+| Target | Objective | LSTM Weight | Accuracy | Macro F1 | Log Loss | ROC AUC |
+|---|---|---:|---:|---:|---:|---:|
+| `actionId` | Macro F1 | 0.30 | 0.46913 | 0.33891 | 1.54291 | — |
+| `pointId` | Macro F1 | 0.65 | 0.26762 | 0.20690 | 1.91872 | — |
+| `serverGetPoint` | ROC AUC | 0.20 | 0.57010 | 0.56908 | 0.67540 | 0.60167 |
+
+Tabular-first submission generation:
+
+```powershell
+uv run python src\predict_tabular_submission.py
+```
+
+Output:
+
+```text
+submissions/submission_tabular_baseline.csv
+```
+
+The tabular submission applies an `actionId` structural mask: for test targets
+with `target_strikeNumber >= 2`, serve classes `15..18` are zeroed before argmax.

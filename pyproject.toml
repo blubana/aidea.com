@@ -1,0 +1,35 @@
+[project]
+name = "aidea-table-tennis"
+version = "0.1.0"
+description = "Table-tennis rally prefix prediction: EDA, feature engineering, tabular baselines, and CUDA LSTM models."
+readme = "ENVIRONMENT.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "joblib",
+    "tqdm",
+    "matplotlib",
+    "seaborn",
+    "polars",
+    "pyarrow",
+    "catboost",
+    "xgboost",
+    "torch",
+    "torchvision",
+    "torchaudio",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

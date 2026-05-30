@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Raw and generated data
+dataset/
+data/
+
+# Generated artifacts
+models/
+reports/
+submissions/
+
+# Large binary arrays/checkpoints
+*.npz
+*.npy
+*.pt
+*.pth
+*.joblib
+*.pkl

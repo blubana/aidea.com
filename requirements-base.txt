@@ -1,0 +1,16 @@
+# Core data science dependencies for EDA, tabular baselines, and feature work.
+numpy
+pandas
+scikit-learn
+joblib
+tqdm
+matplotlib
+seaborn
+
+# Fast dataframe / parquet support; useful once generated CSVs grow.
+polars
+pyarrow
+
+# Tabular models. CatBoost can use NVIDIA GPU with task_type="GPU".
+catboost
+xgboost
