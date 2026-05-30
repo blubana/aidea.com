@@ -27,6 +27,7 @@ EDA
 → compare with baseline
 → simple ensemble validation
 → Step A diagnostics
+→ Step B point-phase optimization
 → stacking / auxiliary tasks / tuning
 ```
 
@@ -268,6 +269,24 @@ reports/diagnostics/oof_slices.csv
 reports/diagnostics/summary.json
 reports/diagnostics/leakage_checks.json
 reports/diagnostics/prefix_ablation.csv  # optional
+```
+
+### 10. Run Step B pointId phase-specific optimization
+
+```powershell
+uv run python src\train_point_phase_models.py
+```
+
+Outputs:
+
+```text
+models/point_phase/global.joblib
+models/point_phase/<bucket>.joblib
+reports/point_phase/summary.json
+reports/point_phase/per_bucket_metrics.csv
+reports/point_phase/pointId_oof_proba.npy
+reports/point_phase/pointId_oof_predictions.csv
+reports/point_phase/pointId_blend_summary.csv  # optional
 ```
 
 ## Random seed and reproducibility
@@ -573,3 +592,54 @@ Interpretation:
 - The current validation gap supports a realistic improvement goal around
   `pointId` Macro F1 0.24–0.28 and `serverGetPoint` ROC AUC 0.63–0.68 without
   leakage, rather than the stretch targets 0.50 / 0.85.
+
+## Step B pointId phase-specific optimization
+
+Run the pointId phase-specific model experiment:
+
+```powershell
+uv run python src\train_point_phase_models.py --n-estimators 400 --blend-with-existing reports\ensemble\summary.csv
+```
+
+Outputs:
+
+```text
+models/point_phase/global.joblib
+models/point_phase/receive.joblib
+models/point_phase/third_ball.joblib
+models/point_phase/early_rally.joblib
+models/point_phase/rally.joblib
+
+reports/point_phase/summary.json
+reports/point_phase/per_bucket_metrics.csv
+reports/point_phase/pointId_oof_proba.npy
+reports/point_phase/pointId_oof_predictions.csv
+reports/point_phase/pointId_blend_summary.csv
+```
+
+Buckets:
+
+| Bucket | Definition |
+|---|---|
+| `receive` | `next_strikeNumber == 2` |
+| `third_ball` | `next_strikeNumber == 3` |
+| `early_rally` | `next_strikeNumber in {4, 5}` |
+| `rally` | `next_strikeNumber >= 6` |
+
+Step B pointId results:
+
+| Point model | Macro F1 | Test-weighted Macro F1 | Prefix <= 3 | Prefix <= 4 |
+|---|---:|---:|---:|---:|
+| previous point ensemble | 0.20690 | 0.19177 | 0.18452 | 0.18829 |
+| point phase only | 0.19764 | 0.18609 | 0.18467 | 0.18942 |
+| phase blend, best all Macro F1 | 0.20932 | 0.19438 | 0.19144 | 0.19816 |
+| phase blend, best weighted Macro F1 | 0.20909 | 0.19462 | 0.19189 | 0.19836 |
+
+Interpretation:
+
+- Phase-specific point models are weaker than the current point ensemble by
+  themselves.
+- They add useful diversity when blended.
+- The best test-like blend currently uses `weight_point_phase=0.40`, improving
+  weighted Macro F1 from `0.19177` to `0.19462` and short-prefix Macro F1 from
+  `0.18452` to `0.19189`.

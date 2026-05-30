@@ -21,6 +21,7 @@ EDA
 → compare with baseline
 → simple ensemble validation
 → Step A diagnostics
+→ Step B point-phase optimization
 → stacking / auxiliary tasks / tuning
 ```
 
@@ -59,6 +60,7 @@ used as additional features for the `serverGetPoint` model.
 - [x] compare with baseline
 - [x] ensemble validation
 - [x] Step A diagnostics review
+- [x] Step B point-phase optimization review
 - [ ] final blended submission
 - [ ] stacking / auxiliary tasks / tuning
 
@@ -98,6 +100,29 @@ Leakage checks:
 - Prefix-length ablation showed minimal effect:
   - `pointId` Macro F1: 0.19461 with prefix features vs. 0.19409 without.
   - `serverGetPoint` AUC: 0.59821 with prefix features vs. 0.59819 without.
+
+## Step B point-phase optimization summary
+
+Step B trains pointId-only phase-specific ExtraTrees models by
+`next_strikeNumber` bucket:
+
+- `receive`: `next_strikeNumber == 2`
+- `third_ball`: `next_strikeNumber == 3`
+- `early_rally`: `next_strikeNumber in {4, 5}`
+- `rally`: `next_strikeNumber >= 6`
+
+Results:
+
+| Point model | Macro F1 | Test-weighted Macro F1 | Prefix <= 3 | Prefix <= 4 |
+|---|---:|---:|---:|---:|
+| previous point ensemble | 0.20690 | 0.19177 | 0.18452 | 0.18829 |
+| point phase only | 0.19764 | 0.18609 | 0.18467 | 0.18942 |
+| phase blend, best all Macro F1 | 0.20932 | 0.19438 | 0.19144 | 0.19816 |
+| phase blend, best weighted Macro F1 | 0.20909 | 0.19462 | 0.19189 | 0.19836 |
+
+Interpretation: phase-specific point models are not strong enough alone, but they
+add useful diversity when blended with the previous point ensemble. The best
+test-like setting currently uses `weight_point_phase=0.40`.
 
 ## Visualization support
 
