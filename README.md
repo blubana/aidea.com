@@ -28,6 +28,7 @@ EDA
 → simple ensemble validation
 → Step A diagnostics
 → Step B point-phase optimization
+→ Step C server stacking optimization
 → stacking / auxiliary tasks / tuning
 ```
 
@@ -230,7 +231,23 @@ uv run python src\train_lstm.py --target pointId --preset point
 uv run python src\train_lstm.py --target serverGetPoint --preset server --no-use-sample-weight
 ```
 
-### 7. Create tabular-baseline submission
+### 7. Train Step C serverGetPoint stacking
+
+```powershell
+uv run python src\train_server_stacking.py --model extratrees
+```
+
+Outputs:
+
+```text
+models/server_stacking/serverGetPoint_<model>.joblib
+reports/server_stacking/serverGetPoint_oof_proba.npy
+reports/server_stacking/serverGetPoint_oof_predictions.csv
+reports/server_stacking/blend_summary.csv
+reports/server_stacking/summary.json
+```
+
+### 8. Create tabular-baseline submission
 
 ```powershell
 uv run python src\predict_tabular_submission.py
@@ -242,7 +259,7 @@ Output:
 submissions/submission_tabular_baseline.csv
 ```
 
-### 8. Validate a simple tabular + LSTM ensemble
+### 9. Validate a simple tabular + LSTM ensemble
 
 ```powershell
 uv run python src\ensemble_validation.py
@@ -255,7 +272,7 @@ reports/ensemble/summary.csv
 reports/ensemble/summary.json
 ```
 
-### 9. Run Step A validation diagnostics
+### 10. Run Step A validation diagnostics
 
 ```powershell
 uv run python src\validation_diagnostics.py
@@ -643,3 +660,59 @@ Interpretation:
 - The best test-like blend currently uses `weight_point_phase=0.40`, improving
   weighted Macro F1 from `0.19177` to `0.19462` and short-prefix Macro F1 from
   `0.18452` to `0.19189`.
+
+## Step C serverGetPoint stacking optimization
+
+Run the server stacking experiment:
+
+```powershell
+uv run python src\train_server_stacking.py --model extratrees --n-estimators 400
+```
+
+Outputs:
+
+```text
+models/server_stacking/serverGetPoint_extratrees.joblib
+
+reports/server_stacking/summary.json
+reports/server_stacking/blend_summary.csv
+reports/server_stacking/serverGetPoint_oof_proba.npy
+reports/server_stacking/serverGetPoint_oof_predictions.csv
+```
+
+Stacking features:
+
+- Safe tabular prefix features.
+- `actionId` OOF probabilities from tabular, LSTM, and ensemble models.
+- `pointId` OOF probabilities from tabular, LSTM, ensemble, point-phase, and
+  point-phase blend models.
+- Compact probability meta-features: argmax, max probability, entropy, and top-2
+  margin.
+
+Forbidden features excluded:
+
+```text
+sample_id
+rally_uid
+source_rally_len
+sample_weight
+target_strikeNumber
+label_actionId
+label_pointId
+label_serverGetPoint
+```
+
+Step C server results:
+
+| Server model | ROC AUC | Test-weighted ROC AUC | Prefix <= 3 AUC | Prefix <= 4 AUC |
+|---|---:|---:|---:|---:|
+| previous server ensemble | 0.60167 | 0.58407 | 0.58247 | 0.59198 |
+| server stacking only | 0.60238 | 0.58640 | 0.58592 | 0.59411 |
+| stack blend, best all AUC | 0.60473 | 0.58762 | 0.58653 | 0.59535 |
+| stack blend, best weighted AUC | 0.60465 | 0.58776 | 0.58680 | 0.59547 |
+
+Interpretation:
+
+- Server stacking gives a small but consistent AUC improvement.
+- The best all-OOF AUC uses `weight_server_stacking=0.55`.
+- The best test-weighted AUC uses `weight_server_stacking=0.65`.

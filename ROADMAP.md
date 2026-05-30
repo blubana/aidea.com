@@ -22,6 +22,7 @@ EDA
 → simple ensemble validation
 → Step A diagnostics
 → Step B point-phase optimization
+→ Step C server stacking optimization
 → stacking / auxiliary tasks / tuning
 ```
 
@@ -45,6 +46,12 @@ Reason:
 Later stages may add stacking, where action/point out-of-fold probabilities are
 used as additional features for the `serverGetPoint` model.
 
+Current Step C command placeholder:
+
+```powershell
+uv run python src\train_server_stacking.py --model extratrees
+```
+
 ## Status
 
 - [x] EDA
@@ -61,6 +68,7 @@ used as additional features for the `serverGetPoint` model.
 - [x] ensemble validation
 - [x] Step A diagnostics review
 - [x] Step B point-phase optimization review
+- [x] Step C server stacking optimization
 - [ ] final blended submission
 - [ ] stacking / auxiliary tasks / tuning
 
@@ -123,6 +131,24 @@ Results:
 Interpretation: phase-specific point models are not strong enough alone, but they
 add useful diversity when blended with the previous point ensemble. The best
 test-like setting currently uses `weight_point_phase=0.40`.
+
+## Step C server stacking optimization summary
+
+Step C stacks safe base features with action/point OOF probability features to
+improve `serverGetPoint` ROC AUC. It uses no `source_rally_len`, labels,
+`target_strikeNumber`, IDs, or `sample_weight` as model features.
+
+Results:
+
+| Server model | ROC AUC | Test-weighted ROC AUC | Prefix <= 3 AUC | Prefix <= 4 AUC |
+|---|---:|---:|---:|---:|
+| previous server ensemble | 0.60167 | 0.58407 | 0.58247 | 0.59198 |
+| server stacking only | 0.60238 | 0.58640 | 0.58592 | 0.59411 |
+| stack blend, best all AUC | 0.60473 | 0.58762 | 0.58653 | 0.59535 |
+| stack blend, best weighted AUC | 0.60465 | 0.58776 | 0.58680 | 0.59547 |
+
+Interpretation: server stacking gives a small but consistent honest improvement.
+The best test-like setting currently uses `weight_server_stacking=0.65`.
 
 ## Visualization support
 
