@@ -26,6 +26,7 @@ EDA
 → independent LSTM models
 → compare with baseline
 → simple ensemble validation
+→ Step A diagnostics
 → stacking / auxiliary tasks / tuning
 ```
 
@@ -251,6 +252,22 @@ Outputs:
 ```text
 reports/ensemble/summary.csv
 reports/ensemble/summary.json
+```
+
+### 9. Run Step A validation diagnostics
+
+```powershell
+uv run python src\validation_diagnostics.py
+uv run python src\validation_diagnostics.py --run-prefix-ablation
+```
+
+Outputs:
+
+```text
+reports/diagnostics/oof_slices.csv
+reports/diagnostics/summary.json
+reports/diagnostics/leakage_checks.json
+reports/diagnostics/prefix_ablation.csv  # optional
 ```
 
 ## Random seed and reproducibility
@@ -505,3 +522,54 @@ submissions/submission_tabular_baseline.csv
 
 The tabular submission applies an `actionId` structural mask: for test targets
 with `target_strikeNumber >= 2`, serve classes `15..18` are zeroed before argmax.
+
+## Step A validation diagnostics
+
+Run objective-focused diagnostics:
+
+```powershell
+uv run python src\validation_diagnostics.py
+```
+
+Run diagnostics plus prefix-length ablation:
+
+```powershell
+uv run python src\validation_diagnostics.py --run-prefix-ablation --n-estimators 120
+```
+
+Outputs:
+
+```text
+reports/diagnostics/oof_slices.csv
+reports/diagnostics/summary.json
+reports/diagnostics/leakage_checks.json
+reports/diagnostics/prefix_ablation.csv
+```
+
+Current Step A findings:
+
+| Target | Source | Main Metric | All OOF | Test-weighted | Prefix <= 3 | Prefix <= 4 |
+|---|---|---:|---:|---:|---:|---:|
+| `actionId` | ensemble | Macro F1 | 0.33891 | 0.31735 | 0.31952 | 0.32651 |
+| `pointId` | ensemble | Macro F1 | 0.20690 | 0.19177 | 0.18452 | 0.18829 |
+| `serverGetPoint` | ensemble | ROC AUC | 0.60167 | 0.58407 | 0.57532 | 0.58045 |
+
+Leakage findings:
+
+- `source_rally_len` parity is nearly an oracle for train `serverGetPoint`
+  (`AUC=0.99846`) and must remain excluded from all features.
+- Saved tabular model features pass forbidden-feature checks.
+- LSTM manual features pass forbidden-feature checks.
+- Prefix length alone is not an effective server proxy (`prefix_len` raw
+  `AUC=0.48743`).
+- Prefix-length ablation shows minimal objective impact:
+  - `pointId`: 0.19461 with prefix features vs. 0.19409 without.
+  - `serverGetPoint`: 0.59821 with prefix features vs. 0.59819 without.
+
+Interpretation:
+
+- Test-weighted and short-prefix metrics are lower than all-OOF metrics, so the
+  honest target estimate should use these diagnostics, not only all-OOF scores.
+- The current validation gap supports a realistic improvement goal around
+  `pointId` Macro F1 0.24–0.28 and `serverGetPoint` ROC AUC 0.63–0.68 without
+  leakage, rather than the stretch targets 0.50 / 0.85.
