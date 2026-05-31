@@ -1,4 +1,4 @@
-"""Generate the final blended submission from saved tabular, LSTM, phase, and stacking models."""
+"""Generate the final blended submission from saved tabular, LSTM, phase, stacking, and CatBoost models."""
 
 from __future__ import annotations
 
@@ -21,10 +21,13 @@ TARGET_DIMS = {"actionId": 19, "pointId": 10, "serverGetPoint": 2}
 TARGET_BINARY = {"actionId": False, "pointId": False, "serverGetPoint": True}
 FINAL_WEIGHTS = {
     "action": {"tabular": 0.70, "lstm": 0.30},
+    "action_catboost": 0.15,
     "point_base": {"tabular": 0.35, "lstm": 0.65},
     "point_final": {"base": 0.60, "phase": 0.40},
+    "point_catboost": 0.30,
     "server_base": {"tabular": 0.80, "lstm": 0.20},
     "server_final": {"base": 0.35, "stacking": 0.65},
+    "server_catboost": 0.55,
 }
 
 
@@ -161,6 +164,15 @@ def aligned_bundle_predict(bundle: dict, features: pd.DataFrame, dim: int) -> np
     return normalize_probs(out, dim)
 
 
+def load_catboost_test_probs(path: Path, dim: int, expected_rows: int) -> np.ndarray:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing CatBoost test probabilities: {path}")
+    probs = normalize_probs(np.load(path), dim)
+    if len(probs) != expected_rows:
+        raise ValueError(f"CatBoost probability row mismatch for {path}: expected {expected_rows}, got {len(probs)}")
+    return probs
+
+
 def predict_point_phase(features: pd.DataFrame, model_dir: Path) -> np.ndarray:
     bundles = load_phase_models(model_dir)
     buckets = assign_bucket(features["next_strikeNumber"])
@@ -237,6 +249,7 @@ def main() -> None:
     lstm_dir = Path("models/lstm")
     point_phase_dir = Path("models/point_phase")
     server_stack_path = Path("models/server_stacking/serverGetPoint_extratrees.joblib")
+    catboost_report_dir = Path("reports/catboost")
     report_dir = Path("reports/final_blend")
     submission_path = Path("submissions/submission_final_blend.csv")
 
@@ -246,13 +259,18 @@ def main() -> None:
     action_lstm = predict_lstm_target("actionId", npz_path, lstm_dir)
     point_lstm = predict_lstm_target("pointId", npz_path, lstm_dir)
     server_lstm = predict_lstm_target("serverGetPoint", npz_path, lstm_dir)
+    action_catboost = load_catboost_test_probs(catboost_report_dir / "actionId_test_proba.npy", 19, len(test_features))
+    point_catboost = load_catboost_test_probs(catboost_report_dir / "pointId_test_proba.npy", 10, len(test_features))
+    server_catboost = load_catboost_test_probs(catboost_report_dir / "serverGetPoint_test_proba.npy", 2, len(test_features))
 
-    action_final = normalize_probs(FINAL_WEIGHTS["action"]["tabular"] * action_tab + FINAL_WEIGHTS["action"]["lstm"] * action_lstm, 19)
+    action_base = normalize_probs(FINAL_WEIGHTS["action"]["tabular"] * action_tab + FINAL_WEIGHTS["action"]["lstm"] * action_lstm, 19)
+    action_final = normalize_probs((1.0 - FINAL_WEIGHTS["action_catboost"]) * action_base + FINAL_WEIGHTS["action_catboost"] * action_catboost, 19)
     action_final = apply_action_serve_mask(action_final, test_features)
 
     point_base = normalize_probs(FINAL_WEIGHTS["point_base"]["tabular"] * point_tab + FINAL_WEIGHTS["point_base"]["lstm"] * point_lstm, 10)
     point_phase = predict_point_phase(test_features, point_phase_dir)
-    point_final = normalize_probs(FINAL_WEIGHTS["point_final"]["base"] * point_base + FINAL_WEIGHTS["point_final"]["phase"] * point_phase, 10)
+    point_without_catboost = normalize_probs(FINAL_WEIGHTS["point_final"]["base"] * point_base + FINAL_WEIGHTS["point_final"]["phase"] * point_phase, 10)
+    point_final = normalize_probs((1.0 - FINAL_WEIGHTS["point_catboost"]) * point_without_catboost + FINAL_WEIGHTS["point_catboost"] * point_catboost, 10)
 
     server_base = normalize_probs(FINAL_WEIGHTS["server_base"]["tabular"] * server_tab + FINAL_WEIGHTS["server_base"]["lstm"] * server_lstm, 2)
     action_ensemble = normalize_probs(0.70 * action_tab + 0.30 * action_lstm, 19)
@@ -274,7 +292,8 @@ def main() -> None:
     if missing:
         raise ValueError(f"Missing server stacking features: {missing[:10]}")
     server_stack = aligned_bundle_predict(server_bundle, server_stack_features, 2)
-    server_final = normalize_probs(FINAL_WEIGHTS["server_final"]["base"] * server_base + FINAL_WEIGHTS["server_final"]["stacking"] * server_stack, 2)
+    server_without_catboost = normalize_probs(FINAL_WEIGHTS["server_final"]["base"] * server_base + FINAL_WEIGHTS["server_final"]["stacking"] * server_stack, 2)
+    server_final = normalize_probs((1.0 - FINAL_WEIGHTS["server_catboost"]) * server_without_catboost + FINAL_WEIGHTS["server_catboost"] * server_catboost, 2)
 
     submission = pd.DataFrame(
         {
@@ -296,14 +315,20 @@ def main() -> None:
         [
             ("action_tabular_proba", action_tab),
             ("action_lstm_proba", action_lstm),
+            ("action_catboost_proba", action_catboost),
+            ("action_base_proba", action_base),
             ("action_final_proba", action_final),
             ("point_tabular_proba", point_tab),
             ("point_lstm_proba", point_lstm),
             ("point_phase_proba", point_phase),
+            ("point_catboost_proba", point_catboost),
+            ("point_without_catboost_proba", point_without_catboost),
             ("point_final_proba", point_final),
             ("server_tabular_proba", server_tab),
             ("server_lstm_proba", server_lstm),
             ("server_stacking_proba", server_stack),
+            ("server_catboost_proba", server_catboost),
+            ("server_without_catboost_proba", server_without_catboost),
             ("server_final_proba", server_final),
         ],
     )

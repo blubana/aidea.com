@@ -29,6 +29,7 @@ EDA
 → Step A diagnostics
 → Step B point-phase optimization
 → Step C server stacking optimization
+→ Step D CatBoost OOF baselines and blending
 → stacking / auxiliary tasks / tuning
 ```
 
@@ -253,11 +254,11 @@ reports/server_stacking/summary.json
 uv run python src\predict_final_blend.py
 ```
 
-Current final blend weights:
+Current final blend weights include CatBoost probabilities from `reports/catboost/*_test_proba.npy`:
 
-- `actionId`: `0.70 * tabular + 0.30 * LSTM`, then serve-class mask for `target_strikeNumber >= 2`
-- `pointId`: `0.60 * (0.35 * tabular + 0.65 * LSTM) + 0.40 * point_phase`
-- `serverGetPoint`: `0.35 * (0.80 * tabular + 0.20 * LSTM) + 0.65 * server_stacking`
+- `actionId`: `0.85 * (0.70 * tabular + 0.30 * LSTM) + 0.15 * CatBoost`, then serve-class mask for `target_strikeNumber >= 2`
+- `pointId`: `0.70 * (0.60 * (0.35 * tabular + 0.65 * LSTM) + 0.40 * point_phase) + 0.30 * CatBoost`
+- `serverGetPoint`: `0.45 * (0.35 * (0.80 * tabular + 0.20 * LSTM) + 0.65 * server_stacking) + 0.55 * CatBoost`
 
 Outputs:
 
@@ -266,6 +267,48 @@ submissions/submission_final_blend.csv
 reports/final_blend/*.npy
 reports/final_blend/summary.json
 ```
+
+### Step D. Train CatBoost baselines and OOF blends
+
+```powershell
+uv run python src\train_catboost_baseline.py --targets actionId pointId serverGetPoint --task-type GPU
+uv run python src\blend_catboost.py
+```
+
+Outputs:
+
+```text
+models/catboost/<target>_fold*.cbm
+models/catboost/<target>_final.cbm
+reports/catboost/<target>_oof_proba.npy
+reports/catboost/<target>_test_proba.npy
+reports/catboost/<target>_oof_predictions.csv
+reports/catboost/summary.json
+reports/catboost_blend/summary.csv
+reports/catboost_blend/summary.json
+```
+
+Current CatBoost-only OOF results:
+
+| Target | Main metric | Test-weighted metric | Prefix <= 3 | Prefix <= 4 |
+|---|---:|---:|---:|---:|
+| `actionId` Macro F1 | 0.27815 | 0.26101 | 0.26959 | 0.27345 |
+| `pointId` Macro F1 | 0.17603 | 0.16893 | 0.16714 | 0.16993 |
+| `serverGetPoint` ROC AUC | 0.60593 | 0.58566 | 0.58403 | 0.59329 |
+
+CatBoost adds useful ensemble diversity even though standalone multiclass F1 is
+weaker than the current blends. Best OOF blend-search results:
+
+| Target | CatBoost Weight | Main metric | Test-weighted metric |
+|---|---:|---:|---:|
+| `actionId` Macro F1 | 0.15 | 0.34459 | — |
+| `pointId` Macro F1 | 0.25 | 0.21245 | 0.20149 |
+| `pointId` weighted Macro F1 | 0.30 | 0.21196 | 0.20162 |
+| `serverGetPoint` ROC AUC | 0.60 | 0.60946 | 0.59072 |
+| `serverGetPoint` weighted ROC AUC | 0.55 | 0.60941 | 0.59080 |
+
+The final submission generator currently uses the test-like weighted choices for
+`pointId` (`weight_catboost=0.30`) and `serverGetPoint` (`weight_catboost=0.55`).
 
 ### 9. Create tabular-baseline submission
 

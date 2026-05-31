@@ -23,6 +23,7 @@ EDA
 → Step A diagnostics
 → Step B point-phase optimization
 → Step C server stacking optimization
+→ Step D CatBoost OOF baselines and blending
 → stacking / auxiliary tasks / tuning
 ```
 
@@ -69,6 +70,7 @@ uv run python src\train_server_stacking.py --model extratrees
 - [x] Step A diagnostics review
 - [x] Step B point-phase optimization review
 - [x] Step C server stacking optimization
+- [x] Step D CatBoost OOF baselines and blending
 - [x] final blended submission
 - [ ] stacking / auxiliary tasks / tuning
 
@@ -80,9 +82,16 @@ uv run python src\predict_final_blend.py
 
 Current final blend weights:
 
-- `actionId`: `0.70 tabular + 0.30 LSTM`, then serve-class mask.
-- `pointId`: `0.60 * point_base + 0.40 * point_phase`, where `point_base = 0.35 tabular + 0.65 LSTM`.
-- `serverGetPoint`: `0.35 * server_base + 0.65 * server_stacking`, where `server_base = 0.80 tabular + 0.20 LSTM`.
+- `actionId`: `0.85 * action_base + 0.15 * CatBoost`, where `action_base = 0.70 tabular + 0.30 LSTM`, then serve-class mask.
+- `pointId`: `0.70 * point_without_catboost + 0.30 * CatBoost`, where `point_without_catboost = 0.60 * point_base + 0.40 * point_phase`, and `point_base = 0.35 tabular + 0.65 LSTM`.
+- `serverGetPoint`: `0.45 * server_without_catboost + 0.55 * CatBoost`, where `server_without_catboost = 0.35 * server_base + 0.65 * server_stacking`, and `server_base = 0.80 tabular + 0.20 LSTM`.
+
+Current Step D command placeholders:
+
+```powershell
+uv run python src\train_catboost_baseline.py --targets actionId pointId serverGetPoint
+uv run python src\blend_catboost.py
+```
 
 Final blended submission generated and sanity-checked:
 
@@ -98,13 +107,13 @@ valid class ranges: true
 ## Current best validation direction
 
 Primary validation remains `GroupKFold` by `match` because train/test match
-overlap is zero. Current metric-based OOF ensemble directions:
+overlap is zero. Current metric-based OOF ensemble directions after Step D:
 
-| Target | Objective | Best LSTM Weight | Metric |
+| Target | Objective | Key extra blend | Metric |
 |---|---|---:|---:|
-| `actionId` | Macro F1 | 0.30 | 0.33891 |
-| `pointId` | Macro F1 | 0.65 | 0.20690 |
-| `serverGetPoint` | ROC AUC | 0.20 | 0.60167 |
+| `actionId` | Macro F1 | CatBoost 0.15 | 0.34459 |
+| `pointId` | Macro F1 | CatBoost 0.25 | 0.21245 |
+| `serverGetPoint` | ROC AUC | CatBoost 0.60 | 0.60946 |
 
 The tabular-first submission applies an action serve-class mask for test targets
 with `target_strikeNumber >= 2`.
@@ -172,6 +181,33 @@ Results:
 
 Interpretation: server stacking gives a small but consistent honest improvement.
 The best test-like setting currently uses `weight_server_stacking=0.65`.
+
+## Step D CatBoost summary
+
+Step D trains CatBoost OOF baselines for all three tasks and blends their OOF
+probabilities with the previous best validation blends. CatBoost is trained with
+the same safe tabular feature policy: no `source_rally_len`, labels, IDs,
+`target_strikeNumber`, or `sample_weight` as features.
+
+CatBoost-only results:
+
+| Target | Main metric | Test-weighted metric | Prefix <= 3 | Prefix <= 4 |
+|---|---:|---:|---:|---:|
+| `actionId` Macro F1 | 0.27815 | 0.26101 | 0.26959 | 0.27345 |
+| `pointId` Macro F1 | 0.17603 | 0.16893 | 0.16714 | 0.16993 |
+| `serverGetPoint` ROC AUC | 0.60593 | 0.58566 | 0.58403 | 0.59329 |
+
+Best CatBoost blend-search results:
+
+| Target | CatBoost Weight | Main metric | Test-weighted metric |
+|---|---:|---:|---:|
+| `actionId` Macro F1 | 0.15 | 0.34459 | — |
+| `pointId` weighted Macro F1 | 0.30 | 0.21196 | 0.20162 |
+| `serverGetPoint` weighted ROC AUC | 0.55 | 0.60941 | 0.59080 |
+
+Interpretation: CatBoost is mainly useful as ensemble diversity. The updated
+final submission generator now includes CatBoost test probabilities using the
+test-like weighted blend choices for point and server.
 
 ## Visualization support
 
