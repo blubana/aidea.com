@@ -252,6 +252,7 @@ reports/server_stacking/summary.json
 
 ```powershell
 uv run python src\predict_final_blend.py
+uv run python src\predict_final_blend.py --server-output bool
 ```
 
 Current final blend weights include CatBoost probabilities from `reports/catboost/*_test_proba.npy`:
@@ -259,6 +260,12 @@ Current final blend weights include CatBoost probabilities from `reports/catboos
 - `actionId`: `0.85 * (0.70 * tabular + 0.30 * LSTM) + 0.15 * CatBoost`, then serve-class mask for `target_strikeNumber >= 2`
 - `pointId`: `0.70 * (0.60 * (0.35 * tabular + 0.65 * LSTM) + 0.40 * point_phase) + 0.30 * CatBoost`
 - `serverGetPoint`: `0.45 * (0.35 * (0.80 * tabular + 0.20 * LSTM) + 0.65 * server_stacking) + 0.55 * CatBoost`
+
+Notes:
+
+- `src/predict_final_blend.py` now supports `--server-output {float,bool}`. `float` writes the positive-class probability, while `bool` writes the argmax class.
+- `--use-cross-target-stacking/--no-use-cross-target-stacking` is reserved for future bounded experiments and is currently stored in the run summary only.
+- `src/train_tabular_baseline.py` now explicitly drops `sample_weight` from model features while still using it as training weight.
 
 Outputs:
 

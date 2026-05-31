@@ -49,6 +49,7 @@ TARGETS = {
 DROP_COLUMNS = {
     "sample_id",
     "rally_uid",
+    "sample_weight",
     "label_actionId",
     "label_pointId",
     "label_serverGetPoint",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 from pathlib import Path
 from typing import Iterable
 
@@ -29,6 +30,13 @@ FINAL_WEIGHTS = {
     "server_final": {"base": 0.35, "stacking": 0.65},
     "server_catboost": 0.55,
 }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--server-output", default="float", choices=["float", "bool"])
+    parser.add_argument("--use-cross-target-stacking", action=argparse.BooleanOptionalAction, default=False)
+    return parser.parse_args()
 
 
 class TestLSTMDataset(Dataset):
@@ -223,7 +231,7 @@ def build_server_stacking_test_frame(
     return x
 
 
-def validate_submission(df: pd.DataFrame, expected_rows: int) -> None:
+def validate_submission(df: pd.DataFrame, expected_rows: int, server_output: str) -> None:
     if len(df) != expected_rows:
         raise ValueError(f"Submission row mismatch: expected {expected_rows}, got {len(df)}")
     if df.isna().any().any():
@@ -234,6 +242,10 @@ def validate_submission(df: pd.DataFrame, expected_rows: int) -> None:
         raise ValueError("pointId out of range")
     if not df["serverGetPoint"].between(0, 1).all():
         raise ValueError("serverGetPoint out of range")
+    if server_output == "bool":
+        values = df["serverGetPoint"].to_numpy()
+        if not np.isin(values, [0, 1]).all():
+            raise ValueError("serverGetPoint bool mode must contain only 0/1")
 
 
 def save_probabilities(report_dir: Path, arrays: Iterable[tuple[str, np.ndarray]]) -> None:
@@ -243,6 +255,7 @@ def save_probabilities(report_dir: Path, arrays: Iterable[tuple[str, np.ndarray]
 
 
 def main() -> None:
+    args = parse_args()
     test_features = pd.read_csv("data/processed/prefix_test_features.csv")
     npz_path = Path("data/processed/lstm_dataset.npz")
     tabular_dir = Path("models/tabular_baseline")
@@ -295,15 +308,17 @@ def main() -> None:
     server_without_catboost = normalize_probs(FINAL_WEIGHTS["server_final"]["base"] * server_base + FINAL_WEIGHTS["server_final"]["stacking"] * server_stack, 2)
     server_final = normalize_probs((1.0 - FINAL_WEIGHTS["server_catboost"]) * server_without_catboost + FINAL_WEIGHTS["server_catboost"] * server_catboost, 2)
 
+    server_output_values = server_final[:, 1] if args.server_output == "float" else server_final.argmax(axis=1).astype(int)
+
     submission = pd.DataFrame(
         {
             "rally_uid": test_features["sample_id"].astype(int),
             "actionId": action_final.argmax(axis=1).astype(int),
             "pointId": point_final.argmax(axis=1).astype(int),
-            "serverGetPoint": server_final.argmax(axis=1).astype(int),
+            "serverGetPoint": server_output_values,
         }
     )
-    validate_submission(submission, len(test_features))
+    validate_submission(submission, len(test_features), args.server_output)
     if submission["rally_uid"].nunique() != len(test_features):
         raise ValueError("Row count does not equal unique test rally count")
 
@@ -337,6 +352,8 @@ def main() -> None:
             {
                 "submission_path": str(submission_path),
                 "rows": int(len(submission)),
+                "server_output_mode": args.server_output,
+                "use_cross_target_stacking": args.use_cross_target_stacking,
                 "weights": FINAL_WEIGHTS,
                 "server_stack_probability_groups": [
                     "action_tabular",
@@ -353,6 +370,7 @@ def main() -> None:
                     "row_count_matches_test": True,
                     "no_nans": True,
                     "valid_class_ranges": True,
+                    "server_output_valid": True,
                 },
             },
             indent=2,

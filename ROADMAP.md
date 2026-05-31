@@ -78,6 +78,7 @@ Current final blend command:
 
 ```powershell
 uv run python src\predict_final_blend.py
+uv run python src\predict_final_blend.py --server-output bool
 ```
 
 Current final blend weights:
@@ -85,6 +86,12 @@ Current final blend weights:
 - `actionId`: `0.85 * action_base + 0.15 * CatBoost`, where `action_base = 0.70 tabular + 0.30 LSTM`, then serve-class mask.
 - `pointId`: `0.70 * point_without_catboost + 0.30 * CatBoost`, where `point_without_catboost = 0.60 * point_base + 0.40 * point_phase`, and `point_base = 0.35 tabular + 0.65 LSTM`.
 - `serverGetPoint`: `0.45 * server_without_catboost + 0.55 * CatBoost`, where `server_without_catboost = 0.35 * server_base + 0.65 * server_stacking`, and `server_base = 0.80 tabular + 0.20 LSTM`.
+
+Implementation notes:
+
+- Final submission generation now supports `--server-output {float,bool}`.
+- A future `--use-cross-target-stacking` switch is wired in summary/reporting with a safe default of `false`.
+- The ExtraTrees tabular baseline now excludes `sample_weight` from features while preserving it as fit-time weight.
 
 Current Step D command placeholders:
 
