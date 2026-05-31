@@ -36,6 +36,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--server-output", default="float", choices=["float", "bool"])
     parser.add_argument("--use-cross-target-stacking", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--submission-path", default="submissions/submission_final_blend.csv")
+    parser.add_argument("--class-multiplier-dir", default="reports/class_multipliers")
+    parser.add_argument("--use-class-multipliers", action=argparse.BooleanOptionalAction, default=False)
     return parser.parse_args()
 
 
@@ -254,6 +257,21 @@ def save_probabilities(report_dir: Path, arrays: Iterable[tuple[str, np.ndarray]
         np.save(report_dir / f"{name}.npy", arr)
 
 
+def load_class_multipliers(path: Path, expected_dim: int) -> np.ndarray:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing class multipliers: {path}")
+    values = np.asarray(np.load(path), dtype=float).reshape(-1)
+    if len(values) != expected_dim:
+        raise ValueError(f"Class multiplier length mismatch for {path}: expected {expected_dim}, got {len(values)}")
+    if np.any(values <= 0) or not np.isfinite(values).all():
+        raise ValueError(f"Class multipliers must be finite positive values: {path}")
+    return values
+
+
+def apply_class_multipliers(probs: np.ndarray, multipliers: np.ndarray) -> np.ndarray:
+    return normalize_probs(probs * multipliers.reshape(1, -1), probs.shape[1])
+
+
 def main() -> None:
     args = parse_args()
     test_features = pd.read_csv("data/processed/prefix_test_features.csv")
@@ -263,8 +281,9 @@ def main() -> None:
     point_phase_dir = Path("models/point_phase")
     server_stack_path = Path("models/server_stacking/serverGetPoint_extratrees.joblib")
     catboost_report_dir = Path("reports/catboost")
+    class_multiplier_dir = Path(args.class_multiplier_dir)
     report_dir = Path("reports/final_blend")
-    submission_path = Path("submissions/submission_final_blend.csv")
+    submission_path = Path(args.submission_path)
 
     action_tab = aligned_tabular_proba(tabular_dir / "actionId_extratrees.joblib", test_features, "actionId")
     point_tab = aligned_tabular_proba(tabular_dir / "pointId_extratrees.joblib", test_features, "pointId")
@@ -308,13 +327,31 @@ def main() -> None:
     server_without_catboost = normalize_probs(FINAL_WEIGHTS["server_final"]["base"] * server_base + FINAL_WEIGHTS["server_final"]["stacking"] * server_stack, 2)
     server_final = normalize_probs((1.0 - FINAL_WEIGHTS["server_catboost"]) * server_without_catboost + FINAL_WEIGHTS["server_catboost"] * server_catboost, 2)
 
+    action_final_adjusted = action_final.copy()
+    point_final_adjusted = point_final.copy()
+    class_multiplier_summary = {"enabled": args.use_class_multipliers}
+    if args.use_class_multipliers:
+        action_multipliers = load_class_multipliers(class_multiplier_dir / "actionId_multipliers.npy", 19)
+        point_multipliers = load_class_multipliers(class_multiplier_dir / "pointId_multipliers.npy", 10)
+        action_final_adjusted = apply_class_multipliers(action_final_adjusted, action_multipliers)
+        point_final_adjusted = apply_class_multipliers(point_final_adjusted, point_multipliers)
+        class_multiplier_summary.update(
+            {
+                "directory": str(class_multiplier_dir),
+                "action_multipliers_path": str(class_multiplier_dir / "actionId_multipliers.npy"),
+                "point_multipliers_path": str(class_multiplier_dir / "pointId_multipliers.npy"),
+                "action_multiplier_mean": float(np.mean(action_multipliers)),
+                "point_multiplier_mean": float(np.mean(point_multipliers)),
+            }
+        )
+
     server_output_values = server_final[:, 1] if args.server_output == "float" else server_final.argmax(axis=1).astype(int)
 
     submission = pd.DataFrame(
         {
             "rally_uid": test_features["sample_id"].astype(int),
-            "actionId": action_final.argmax(axis=1).astype(int),
-            "pointId": point_final.argmax(axis=1).astype(int),
+            "actionId": action_final_adjusted.argmax(axis=1).astype(int),
+            "pointId": point_final_adjusted.argmax(axis=1).astype(int),
             "serverGetPoint": server_output_values,
         }
     )
@@ -333,12 +370,14 @@ def main() -> None:
             ("action_catboost_proba", action_catboost),
             ("action_base_proba", action_base),
             ("action_final_proba", action_final),
+            ("action_final_adjusted_proba", action_final_adjusted),
             ("point_tabular_proba", point_tab),
             ("point_lstm_proba", point_lstm),
             ("point_phase_proba", point_phase),
             ("point_catboost_proba", point_catboost),
             ("point_without_catboost_proba", point_without_catboost),
             ("point_final_proba", point_final),
+            ("point_final_adjusted_proba", point_final_adjusted),
             ("server_tabular_proba", server_tab),
             ("server_lstm_proba", server_lstm),
             ("server_stacking_proba", server_stack),
@@ -354,6 +393,7 @@ def main() -> None:
                 "rows": int(len(submission)),
                 "server_output_mode": args.server_output,
                 "use_cross_target_stacking": args.use_cross_target_stacking,
+                "class_multipliers": class_multiplier_summary,
                 "weights": FINAL_WEIGHTS,
                 "server_stack_probability_groups": [
                     "action_tabular",

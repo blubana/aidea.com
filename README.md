@@ -253,6 +253,7 @@ reports/server_stacking/summary.json
 ```powershell
 uv run python src\predict_final_blend.py
 uv run python src\predict_final_blend.py --server-output bool
+uv run python src\predict_final_blend.py --use-class-multipliers --submission-path submissions\submission_final_blend_p1.csv
 ```
 
 Current final blend weights include CatBoost probabilities from `reports/catboost/*_test_proba.npy`:
@@ -264,8 +265,24 @@ Current final blend weights include CatBoost probabilities from `reports/catboos
 Notes:
 
 - `src/predict_final_blend.py` now supports `--server-output {float,bool}`. `float` writes the positive-class probability, while `bool` writes the argmax class.
+- `src/predict_final_blend.py` also supports `--submission-path` and optional `--use-class-multipliers` for `actionId` / `pointId` probability reweighting before argmax.
 - `--use-cross-target-stacking/--no-use-cross-target-stacking` is reserved for future bounded experiments and is currently stored in the run summary only.
 - `src/train_tabular_baseline.py` now explicitly drops `sample_weight` from model features while still using it as training weight.
+
+P1 Macro-F1 multiplier tuning command:
+
+```powershell
+uv run python src\tune_class_multipliers.py
+```
+
+Outputs:
+
+```text
+reports/class_multipliers/actionId_multipliers.npy
+reports/class_multipliers/pointId_multipliers.npy
+reports/class_multipliers/summary.csv
+reports/class_multipliers/summary.json
+```
 
 Outputs:
 
