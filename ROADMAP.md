@@ -97,6 +97,7 @@ Implementation notes:
 - Final submission generation now also supports optional action-phase blending from `models/action_phase`.
 - Final submission generation now also supports gated optional `pointId` cross-target stacking from `models/point_stacking`.
 - The ExtraTrees tabular baseline now excludes `sample_weight` from features while preserving it as fit-time weight.
+- Prefix dataset building now supports multiple safe sample-weight modes and includes observed-prefix transition features.
 
 P1 Macro-F1 multiplier tuning command:
 
@@ -104,6 +105,7 @@ P1 Macro-F1 multiplier tuning command:
 uv run python src\tune_class_multipliers.py
 uv run python src\train_action_phase_models.py
 uv run python src\train_point_stacking.py
+uv run python src\ablate_feature_groups.py --targets actionId pointId serverGetPoint --drop-transition-features
 ```
 
 Current Step D command placeholders:

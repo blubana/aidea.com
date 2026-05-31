@@ -138,6 +138,10 @@ def _safe_ratio(num: int, den: int) -> float:
     return 0.0 if den == 0 else num / den
 
 
+def _transition_token(left: object, right: object) -> str:
+    return f"{left}->{right}"
+
+
 def build_prefix_features(prefix_rows: Sequence[Dict[str, str]], last_n: int = 5) -> Dict[str, object]:
     """Build one tabular feature row from a known rally prefix.
 
@@ -228,6 +232,40 @@ def build_prefix_features(prefix_rows: Sequence[Dict[str, str]], last_n: int = 5
     features["last_point_is_zero"] = int(to_int(last.get("pointId"), 0) == 0)
     features["has_zero_action"] = int(any(to_int(row.get("actionId"), 0) == 0 for row in rows))
     features["has_zero_point"] = int(any(to_int(row.get("pointId"), 0) == 0 for row in rows))
+
+    prev = rows[-2] if len(rows) >= 2 else None
+    if prev is not None:
+        prev_action = to_int(prev.get("actionId"), 0)
+        last_action = to_int(last.get("actionId"), 0)
+        prev_point = to_int(prev.get("pointId"), 0)
+        last_point = to_int(last.get("pointId"), 0)
+        prev_depth = point_depth(prev_point)
+        last_depth = point_depth(last_point)
+        prev_side = point_side(prev_point)
+        last_side = point_side(last_point)
+        prev_group = action_group(prev_action)
+        last_group = action_group(last_action)
+        features["last2_action_transition"] = _transition_token(prev_action, last_action)
+        features["last2_point_transition"] = _transition_token(prev_point, last_point)
+        features["last2_depth_transition"] = _transition_token(prev_depth, last_depth)
+        features["last2_side_transition"] = _transition_token(prev_side, last_side)
+        features["last2_action_group_transition"] = _transition_token(prev_group, last_group)
+        same_hitter = to_int(prev.get("gamePlayerId"), -1) == to_int(last.get("gamePlayerId"), -1)
+        features["last2_same_hitter"] = int(same_hitter)
+    else:
+        features["last2_action_transition"] = "missing"
+        features["last2_point_transition"] = "missing"
+        features["last2_depth_transition"] = "missing"
+        features["last2_side_transition"] = "missing"
+        features["last2_action_group_transition"] = "missing"
+        features["last2_same_hitter"] = -1
+
+    last_hitter = to_int(last.get("gamePlayerId"), -1)
+    last_action = to_int(last.get("actionId"), -1)
+    recent_window = rows[-3:]
+    features["recent_same_hitter_count_3"] = sum(to_int(r.get("gamePlayerId"), -999) == last_hitter for r in recent_window)
+    features["recent_same_action_count_3"] = sum(to_int(r.get("actionId"), -999) == last_action for r in recent_window)
+    features["recent_attack_group_count_3"] = sum(action_group(to_int(r.get("actionId"), 0)) == "attack" for r in recent_window)
 
     return features
 

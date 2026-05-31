@@ -89,6 +89,7 @@ reports/figures/
 
 ```powershell
 uv run python src\build_prefix_dataset.py --max-prefix-len 12
+uv run python src\build_prefix_dataset.py --max-prefix-len 12 --weight-mode test_over_train --max-sample-weight 5.0
 ```
 
 Outputs:
@@ -96,7 +97,18 @@ Outputs:
 ```text
 data/processed/prefix_train_features.csv
 data/processed/prefix_test_features.csv
+data/processed/prefix_dataset_metadata.json
 ```
+
+Weight modes:
+
+- `test_freq_norm` (default): current normalized test-prefix frequency weighting.
+- `test_over_train`: uses `P_test(prefix_len) / P_train(prefix_len)` with clipping.
+- `uniform`: sets all train sample weights to `1.0`.
+- `rally_balanced_server`: dataset-level inverse train prefix-frequency weighting.
+
+The feature builder now also emits safe observed-prefix transition features such as
+`last2_action_transition`, `last2_point_transition`, and short recent-history counts.
 
 Current generated dataset sizes:
 
@@ -319,6 +331,19 @@ reports/point_stacking/pointId_oof_proba.npy
 reports/point_stacking/pointId_oof_predictions.csv
 reports/point_stacking/blend_summary.csv
 reports/point_stacking/summary.json
+```
+
+Feature ablation command:
+
+```powershell
+uv run python src\ablate_feature_groups.py --targets actionId pointId serverGetPoint --drop-transition-features
+```
+
+Outputs:
+
+```text
+reports/feature_ablation/summary.csv
+reports/feature_ablation/summary.json
 ```
 
 Outputs:
