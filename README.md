@@ -247,7 +247,27 @@ reports/server_stacking/blend_summary.csv
 reports/server_stacking/summary.json
 ```
 
-### 8. Create tabular-baseline submission
+### 8. Create final blended submission
+
+```powershell
+uv run python src\predict_final_blend.py
+```
+
+Current final blend weights:
+
+- `actionId`: `0.70 * tabular + 0.30 * LSTM`, then serve-class mask for `target_strikeNumber >= 2`
+- `pointId`: `0.60 * (0.35 * tabular + 0.65 * LSTM) + 0.40 * point_phase`
+- `serverGetPoint`: `0.35 * (0.80 * tabular + 0.20 * LSTM) + 0.65 * server_stacking`
+
+Outputs:
+
+```text
+submissions/submission_final_blend.csv
+reports/final_blend/*.npy
+reports/final_blend/summary.json
+```
+
+### 9. Create tabular-baseline submission
 
 ```powershell
 uv run python src\predict_tabular_submission.py
@@ -259,7 +279,7 @@ Output:
 submissions/submission_tabular_baseline.csv
 ```
 
-### 9. Validate a simple tabular + LSTM ensemble
+### 10. Validate a simple tabular + LSTM ensemble
 
 ```powershell
 uv run python src\ensemble_validation.py
@@ -272,7 +292,7 @@ reports/ensemble/summary.csv
 reports/ensemble/summary.json
 ```
 
-### 10. Run Step A validation diagnostics
+### 11. Run Step A validation diagnostics
 
 ```powershell
 uv run python src\validation_diagnostics.py
@@ -716,3 +736,53 @@ Interpretation:
 - Server stacking gives a small but consistent AUC improvement.
 - The best all-OOF AUC uses `weight_server_stacking=0.55`.
 - The best test-weighted AUC uses `weight_server_stacking=0.65`.
+
+## Final blended submission
+
+Generate the final blended submission:
+
+```powershell
+uv run python src\predict_final_blend.py
+```
+
+Output:
+
+```text
+submissions/submission_final_blend.csv
+```
+
+Final blend weights:
+
+```text
+actionId:
+  0.70 * tabular_baseline
++ 0.30 * LSTM
+  then mask serve classes 15..18 for target_strikeNumber >= 2
+
+pointId:
+  point_base = 0.35 * tabular_baseline + 0.65 * LSTM
+  final_point = 0.60 * point_base + 0.40 * point_phase
+
+serverGetPoint:
+  server_base = 0.80 * tabular_baseline + 0.20 * LSTM
+  final_server = 0.35 * server_base + 0.65 * server_stacking
+```
+
+Generated artifacts:
+
+```text
+reports/final_blend/summary.json
+reports/final_blend/*_proba.npy
+```
+
+Sanity checks from the generated file:
+
+```text
+rows: 1,845
+unique rally_uid: 1,845
+columns: rally_uid, actionId, pointId, serverGetPoint
+no NaNs: true
+actionId range: 0..14 after serve-class mask
+pointId range: 0..9
+serverGetPoint range: 0..1
+```

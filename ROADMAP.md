@@ -69,8 +69,31 @@ uv run python src\train_server_stacking.py --model extratrees
 - [x] Step A diagnostics review
 - [x] Step B point-phase optimization review
 - [x] Step C server stacking optimization
-- [ ] final blended submission
+- [x] final blended submission
 - [ ] stacking / auxiliary tasks / tuning
+
+Current final blend command:
+
+```powershell
+uv run python src\predict_final_blend.py
+```
+
+Current final blend weights:
+
+- `actionId`: `0.70 tabular + 0.30 LSTM`, then serve-class mask.
+- `pointId`: `0.60 * point_base + 0.40 * point_phase`, where `point_base = 0.35 tabular + 0.65 LSTM`.
+- `serverGetPoint`: `0.35 * server_base + 0.65 * server_stacking`, where `server_base = 0.80 tabular + 0.20 LSTM`.
+
+Final blended submission generated and sanity-checked:
+
+```text
+submissions/submission_final_blend.csv
+rows: 1,845
+columns: rally_uid, actionId, pointId, serverGetPoint
+no NaNs: true
+unique rally_uid: 1,845
+valid class ranges: true
+```
 
 ## Current best validation direction
 
