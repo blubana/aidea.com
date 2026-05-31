@@ -27,6 +27,7 @@ FINAL_WEIGHTS = {
     "point_base": {"tabular": 0.35, "lstm": 0.65},
     "point_final": {"base": 0.60, "phase": 0.40},
     "point_catboost": 0.30,
+    "point_stacking": 0.40,
     "server_base": {"tabular": 0.80, "lstm": 0.20},
     "server_final": {"base": 0.35, "stacking": 0.65},
     "server_catboost": 0.55,
@@ -42,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-class-multipliers", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--use-action-phase", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--action-phase-model-dir", default="models/action_phase")
+    parser.add_argument("--point-stacking-model-path", default="models/point_stacking/pointId_extratrees.joblib")
     return parser.parse_args()
 
 
@@ -251,6 +253,42 @@ def build_server_stacking_test_frame(
     return x
 
 
+def build_point_stacking_test_frame(
+    test_features: pd.DataFrame,
+    action_tab: np.ndarray,
+    action_lstm: np.ndarray,
+    action_cat: np.ndarray,
+    action_ensemble: np.ndarray,
+    action_phase: np.ndarray | None,
+    point_tab: np.ndarray,
+    point_lstm: np.ndarray,
+    point_phase: np.ndarray,
+    point_cat: np.ndarray,
+) -> pd.DataFrame:
+    x = make_base_feature_frame(test_features)
+    add_probability_group(x, "action_tabular", action_tab)
+    add_probability_group(x, "action_lstm", action_lstm)
+    add_probability_group(x, "action_catboost", action_cat)
+    add_probability_group(x, "action_ensemble", action_ensemble)
+    if action_phase is not None:
+        add_probability_group(x, "action_phase", action_phase)
+        action_adjusted = normalize_probs((1.0 - FINAL_WEIGHTS["action_phase"]) * action_ensemble + FINAL_WEIGHTS["action_phase"] * action_phase, 19)
+        add_probability_group(x, "action_adjusted", action_adjusted)
+    point_base = normalize_probs(0.35 * point_tab + 0.65 * point_lstm, 10)
+    add_probability_group(x, "point_tabular", point_tab)
+    add_probability_group(x, "point_lstm", point_lstm)
+    add_probability_group(x, "point_phase", point_phase)
+    add_probability_group(x, "point_catboost", point_cat)
+    add_probability_group(x, "point_base", point_base)
+    point_current = normalize_probs(0.60 * point_base + 0.40 * point_phase, 10)
+    point_current = normalize_probs(0.70 * point_current + 0.30 * point_cat, 10)
+    add_probability_group(x, "point_current", point_current)
+    forbidden_present = [c for c in x.columns if c in FORBIDDEN_FEATURES]
+    if forbidden_present:
+        raise ValueError(f"Forbidden features in point stacking test frame: {forbidden_present}")
+    return x
+
+
 def validate_submission(df: pd.DataFrame, expected_rows: int, server_output: str) -> None:
     if len(df) != expected_rows:
         raise ValueError(f"Submission row mismatch: expected {expected_rows}, got {len(df)}")
@@ -297,6 +335,7 @@ def main() -> None:
     lstm_dir = Path("models/lstm")
     point_phase_dir = Path("models/point_phase")
     action_phase_dir = Path(args.action_phase_model_dir)
+    point_stacking_path = Path(args.point_stacking_model_path)
     server_stack_path = Path("models/server_stacking/serverGetPoint_extratrees.joblib")
     catboost_report_dir = Path("reports/catboost")
     class_multiplier_dir = Path(args.class_multiplier_dir)
@@ -325,6 +364,29 @@ def main() -> None:
     point_phase = predict_point_phase(test_features, point_phase_dir)
     point_without_catboost = normalize_probs(FINAL_WEIGHTS["point_final"]["base"] * point_base + FINAL_WEIGHTS["point_final"]["phase"] * point_phase, 10)
     point_final = normalize_probs((1.0 - FINAL_WEIGHTS["point_catboost"]) * point_without_catboost + FINAL_WEIGHTS["point_catboost"] * point_catboost, 10)
+    point_stacking = None
+    if args.use_cross_target_stacking:
+        action_phase_for_stacking = action_phase
+        if action_phase_for_stacking is None and (action_phase_dir / "global.joblib").exists():
+            action_phase_for_stacking = predict_action_phase(test_features, action_phase_dir)
+        point_stack_features = build_point_stacking_test_frame(
+            test_features,
+            action_tab,
+            action_lstm,
+            action_catboost,
+            normalize_probs(0.85 * action_base + 0.15 * action_catboost, 19),
+            action_phase_for_stacking,
+            point_tab,
+            point_lstm,
+            point_phase,
+            point_catboost,
+        )
+        point_stack_bundle = joblib.load(point_stacking_path)
+        missing = [c for c in point_stack_bundle["feature_columns"] if c not in point_stack_features.columns]
+        if missing:
+            raise ValueError(f"Missing point stacking features: {missing[:10]}")
+        point_stacking = aligned_bundle_predict(point_stack_bundle, point_stack_features, 10)
+        point_final = normalize_probs((1.0 - FINAL_WEIGHTS["point_stacking"]) * point_final + FINAL_WEIGHTS["point_stacking"] * point_stacking, 10)
 
     server_base = normalize_probs(FINAL_WEIGHTS["server_base"]["tabular"] * server_tab + FINAL_WEIGHTS["server_base"]["lstm"] * server_lstm, 2)
     action_ensemble = normalize_probs(0.70 * action_tab + 0.30 * action_lstm, 19)
@@ -399,6 +461,7 @@ def main() -> None:
             ("point_phase_proba", point_phase),
             ("point_catboost_proba", point_catboost),
             ("point_without_catboost_proba", point_without_catboost),
+            ("point_stacking_proba", point_stacking if point_stacking is not None else np.zeros_like(point_final)),
             ("point_final_proba", point_final),
             ("point_final_adjusted_proba", point_final_adjusted),
             ("server_tabular_proba", server_tab),
@@ -416,6 +479,7 @@ def main() -> None:
                 "rows": int(len(submission)),
                 "server_output_mode": args.server_output,
                 "use_cross_target_stacking": args.use_cross_target_stacking,
+                "point_stacking_model_path": str(point_stacking_path),
                 "use_action_phase": args.use_action_phase,
                 "action_phase_model_dir": str(action_phase_dir),
                 "class_multipliers": class_multiplier_summary,

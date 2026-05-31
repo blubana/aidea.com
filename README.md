@@ -255,6 +255,7 @@ uv run python src\predict_final_blend.py
 uv run python src\predict_final_blend.py --server-output bool
 uv run python src\predict_final_blend.py --use-class-multipliers --submission-path submissions\submission_final_blend_p1.csv
 uv run python src\predict_final_blend.py --use-action-phase --submission-path submissions\submission_final_blend_action_phase.csv
+uv run python src\predict_final_blend.py --use-cross-target-stacking --submission-path submissions\submission_final_blend_point_stacking.csv
 ```
 
 Current final blend weights include CatBoost probabilities from `reports/catboost/*_test_proba.npy`:
@@ -268,7 +269,7 @@ Notes:
 - `src/predict_final_blend.py` now supports `--server-output {float,bool}`. `float` writes the positive-class probability, while `bool` writes the argmax class.
 - `src/predict_final_blend.py` also supports `--submission-path` and optional `--use-class-multipliers` for `actionId` / `pointId` probability reweighting before argmax.
 - `src/predict_final_blend.py` also supports optional `--use-action-phase` test blending from `models/action_phase` before class multipliers.
-- `--use-cross-target-stacking/--no-use-cross-target-stacking` is reserved for future bounded experiments and is currently stored in the run summary only.
+- `src/predict_final_blend.py` also supports optional `--use-cross-target-stacking` for gated `pointId` cross-target stacking from `models/point_stacking`.
 - `src/train_tabular_baseline.py` now explicitly drops `sample_weight` from model features while still using it as training weight.
 
 P1 Macro-F1 multiplier tuning command:
@@ -302,6 +303,22 @@ reports/action_phase/actionId_oof_predictions.csv
 reports/action_phase/per_bucket_metrics.csv
 reports/action_phase/actionId_blend_summary.csv
 reports/action_phase/summary.json
+```
+
+P1 point cross-target stacking command:
+
+```powershell
+uv run python src\train_point_stacking.py
+```
+
+Outputs:
+
+```text
+models/point_stacking/pointId_extratrees.joblib
+reports/point_stacking/pointId_oof_proba.npy
+reports/point_stacking/pointId_oof_predictions.csv
+reports/point_stacking/blend_summary.csv
+reports/point_stacking/summary.json
 ```
 
 Outputs:

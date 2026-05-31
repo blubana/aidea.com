@@ -81,6 +81,7 @@ uv run python src\predict_final_blend.py
 uv run python src\predict_final_blend.py --server-output bool
 uv run python src\predict_final_blend.py --use-class-multipliers --submission-path submissions\submission_final_blend_p1.csv
 uv run python src\predict_final_blend.py --use-action-phase --submission-path submissions\submission_final_blend_action_phase.csv
+uv run python src\predict_final_blend.py --use-cross-target-stacking --submission-path submissions\submission_final_blend_point_stacking.csv
 ```
 
 Current final blend weights:
@@ -94,7 +95,7 @@ Implementation notes:
 - Final submission generation now supports `--server-output {float,bool}`.
 - Final submission generation now also supports `--submission-path` and optional P1 class multipliers for `actionId` / `pointId`.
 - Final submission generation now also supports optional action-phase blending from `models/action_phase`.
-- A future `--use-cross-target-stacking` switch is wired in summary/reporting with a safe default of `false`.
+- Final submission generation now also supports gated optional `pointId` cross-target stacking from `models/point_stacking`.
 - The ExtraTrees tabular baseline now excludes `sample_weight` from features while preserving it as fit-time weight.
 
 P1 Macro-F1 multiplier tuning command:
@@ -102,6 +103,7 @@ P1 Macro-F1 multiplier tuning command:
 ```powershell
 uv run python src\tune_class_multipliers.py
 uv run python src\train_action_phase_models.py
+uv run python src\train_point_stacking.py
 ```
 
 Current Step D command placeholders:
