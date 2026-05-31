@@ -19,6 +19,7 @@ FINAL_WEIGHTS = {
     "point_base": {"tabular": 0.35, "lstm": 0.65},
     "point_final": {"base": 0.60, "phase": 0.40, "catboost": 0.30},
 }
+ACTION_PHASE_WEIGHT = 0.0
 
 
 def load_probs(path: Path, dim: int, expected_rows: int) -> np.ndarray:
@@ -89,8 +90,12 @@ def main() -> None:
     action_tab = load_probs(Path("reports/tabular_baseline/actionId_oof_proba.npy"), 19, len(df))
     action_lstm = load_probs(Path("reports/lstm/actionId_oof_proba.npy"), 19, len(df))
     action_cat = load_probs(Path("reports/catboost/actionId_oof_proba.npy"), 19, len(df))
+    action_phase_path = Path("reports/action_phase/actionId_oof_proba.npy")
     action_base = normalize_probs(FINAL_WEIGHTS["action"]["tabular"] * action_tab + FINAL_WEIGHTS["action"]["lstm"] * action_lstm, 19)
     action_probs = normalize_probs((1.0 - FINAL_WEIGHTS["action"]["catboost"]) * action_base + FINAL_WEIGHTS["action"]["catboost"] * action_cat, 19)
+    if ACTION_PHASE_WEIGHT > 0 and action_phase_path.exists():
+        action_phase = load_probs(action_phase_path, 19, len(df))
+        action_probs = normalize_probs((1.0 - ACTION_PHASE_WEIGHT) * action_probs + ACTION_PHASE_WEIGHT * action_phase, 19)
     action_y = df[LABEL_COLS["actionId"]].to_numpy(dtype=int)
 
     best_action = None
@@ -107,6 +112,7 @@ def main() -> None:
     best_action_mult, best_action_metrics, action_history = greedy_refine(df, "actionId", action_probs, best_action_mult)
     np.save(out_dir / "actionId_multipliers.npy", best_action_mult)
     summary["actionId"] = {
+        "action_phase_weight": ACTION_PHASE_WEIGHT,
         "best_alpha": best_action["alpha"],
         "best_alpha_metrics": best_action,
         "greedy_refined_metrics": best_action_metrics,

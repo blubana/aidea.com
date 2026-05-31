@@ -254,6 +254,7 @@ reports/server_stacking/summary.json
 uv run python src\predict_final_blend.py
 uv run python src\predict_final_blend.py --server-output bool
 uv run python src\predict_final_blend.py --use-class-multipliers --submission-path submissions\submission_final_blend_p1.csv
+uv run python src\predict_final_blend.py --use-action-phase --submission-path submissions\submission_final_blend_action_phase.csv
 ```
 
 Current final blend weights include CatBoost probabilities from `reports/catboost/*_test_proba.npy`:
@@ -266,6 +267,7 @@ Notes:
 
 - `src/predict_final_blend.py` now supports `--server-output {float,bool}`. `float` writes the positive-class probability, while `bool` writes the argmax class.
 - `src/predict_final_blend.py` also supports `--submission-path` and optional `--use-class-multipliers` for `actionId` / `pointId` probability reweighting before argmax.
+- `src/predict_final_blend.py` also supports optional `--use-action-phase` test blending from `models/action_phase` before class multipliers.
 - `--use-cross-target-stacking/--no-use-cross-target-stacking` is reserved for future bounded experiments and is currently stored in the run summary only.
 - `src/train_tabular_baseline.py` now explicitly drops `sample_weight` from model features while still using it as training weight.
 
@@ -282,6 +284,24 @@ reports/class_multipliers/actionId_multipliers.npy
 reports/class_multipliers/pointId_multipliers.npy
 reports/class_multipliers/summary.csv
 reports/class_multipliers/summary.json
+```
+
+P1 action phase model command:
+
+```powershell
+uv run python src\train_action_phase_models.py
+```
+
+Outputs:
+
+```text
+models/action_phase/global.joblib
+models/action_phase/<bucket>.joblib
+reports/action_phase/actionId_oof_proba.npy
+reports/action_phase/actionId_oof_predictions.csv
+reports/action_phase/per_bucket_metrics.csv
+reports/action_phase/actionId_blend_summary.csv
+reports/action_phase/summary.json
 ```
 
 Outputs:

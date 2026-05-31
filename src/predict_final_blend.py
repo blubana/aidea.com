@@ -23,6 +23,7 @@ TARGET_BINARY = {"actionId": False, "pointId": False, "serverGetPoint": True}
 FINAL_WEIGHTS = {
     "action": {"tabular": 0.70, "lstm": 0.30},
     "action_catboost": 0.15,
+    "action_phase": 0.0,
     "point_base": {"tabular": 0.35, "lstm": 0.65},
     "point_final": {"base": 0.60, "phase": 0.40},
     "point_catboost": 0.30,
@@ -39,6 +40,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--submission-path", default="submissions/submission_final_blend.csv")
     parser.add_argument("--class-multiplier-dir", default="reports/class_multipliers")
     parser.add_argument("--use-class-multipliers", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--use-action-phase", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--action-phase-model-dir", default="models/action_phase")
     return parser.parse_args()
 
 
@@ -198,6 +201,20 @@ def predict_point_phase(features: pd.DataFrame, model_dir: Path) -> np.ndarray:
     return normalize_probs(out, 10)
 
 
+def predict_action_phase(features: pd.DataFrame, model_dir: Path) -> np.ndarray:
+    bundles = load_phase_models(model_dir)
+    buckets = assign_bucket(features["next_strikeNumber"])
+    features = features.copy()
+    features["phase_bucket"] = buckets
+    out = np.zeros((len(features), 19), dtype=float)
+    for bucket in list(DEFAULT_BUCKETS) + ["other"]:
+        mask = (buckets == bucket).to_numpy()
+        if not mask.any():
+            continue
+        out[mask] = aligned_bundle_predict(bundles.get(bucket, bundles["global"]), features.loc[mask], 19)
+    return normalize_probs(out, 19)
+
+
 def apply_action_serve_mask(probs: np.ndarray, test_features: pd.DataFrame) -> np.ndarray:
     out = probs.copy()
     mask = test_features["target_strikeNumber"].to_numpy() >= 2
@@ -279,6 +296,7 @@ def main() -> None:
     tabular_dir = Path("models/tabular_baseline")
     lstm_dir = Path("models/lstm")
     point_phase_dir = Path("models/point_phase")
+    action_phase_dir = Path(args.action_phase_model_dir)
     server_stack_path = Path("models/server_stacking/serverGetPoint_extratrees.joblib")
     catboost_report_dir = Path("reports/catboost")
     class_multiplier_dir = Path(args.class_multiplier_dir)
@@ -297,6 +315,10 @@ def main() -> None:
 
     action_base = normalize_probs(FINAL_WEIGHTS["action"]["tabular"] * action_tab + FINAL_WEIGHTS["action"]["lstm"] * action_lstm, 19)
     action_final = normalize_probs((1.0 - FINAL_WEIGHTS["action_catboost"]) * action_base + FINAL_WEIGHTS["action_catboost"] * action_catboost, 19)
+    action_phase = None
+    if args.use_action_phase:
+        action_phase = predict_action_phase(test_features, action_phase_dir)
+        action_final = normalize_probs((1.0 - FINAL_WEIGHTS["action_phase"]) * action_final + FINAL_WEIGHTS["action_phase"] * action_phase, 19)
     action_final = apply_action_serve_mask(action_final, test_features)
 
     point_base = normalize_probs(FINAL_WEIGHTS["point_base"]["tabular"] * point_tab + FINAL_WEIGHTS["point_base"]["lstm"] * point_lstm, 10)
@@ -369,6 +391,7 @@ def main() -> None:
             ("action_lstm_proba", action_lstm),
             ("action_catboost_proba", action_catboost),
             ("action_base_proba", action_base),
+            ("action_phase_proba", action_phase if action_phase is not None else np.zeros_like(action_final)),
             ("action_final_proba", action_final),
             ("action_final_adjusted_proba", action_final_adjusted),
             ("point_tabular_proba", point_tab),
@@ -393,6 +416,8 @@ def main() -> None:
                 "rows": int(len(submission)),
                 "server_output_mode": args.server_output,
                 "use_cross_target_stacking": args.use_cross_target_stacking,
+                "use_action_phase": args.use_action_phase,
+                "action_phase_model_dir": str(action_phase_dir),
                 "class_multipliers": class_multiplier_summary,
                 "weights": FINAL_WEIGHTS,
                 "server_stack_probability_groups": [
