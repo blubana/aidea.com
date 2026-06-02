@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -86,9 +88,85 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample", type=int, default=0)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--use-sample-weight", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--cuda-opt-profile",
+        default="none",
+        choices=["none", "baseline", "tf32", "benchmark", "bf16", "fp16", "bf16_tf32", "candidate"],
+        help="Controlled CUDA optimization preset for LSTM benchmarking.",
+    )
+    parser.add_argument("--tf32", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--cudnn-benchmark", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--amp", default=None, choices=[None, "off", "bf16", "fp16"])
+    parser.add_argument("--benchmark-warmup-steps", type=int, default=20)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--pin-memory", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--prefetch-factor", type=int, default=2)
+    parser.add_argument("--persistent-workers", action=argparse.BooleanOptionalAction, default=False)
     args = parser.parse_args()
     apply_preset_overrides(args, sys.argv[1:])
     return args
+
+
+CUDA_OPT_PROFILES = {
+    "none": {},
+    "baseline": {"tf32": False, "cudnn_benchmark": False, "amp": "off"},
+    "tf32": {"tf32": True, "cudnn_benchmark": False, "amp": "off"},
+    "benchmark": {"tf32": False, "cudnn_benchmark": True, "amp": "off"},
+    "bf16": {"tf32": False, "cudnn_benchmark": False, "amp": "bf16"},
+    "fp16": {"tf32": False, "cudnn_benchmark": False, "amp": "fp16"},
+    "bf16_tf32": {"tf32": True, "cudnn_benchmark": False, "amp": "bf16"},
+    "candidate": {"tf32": True, "cudnn_benchmark": True, "amp": "bf16"},
+}
+
+
+def resolve_cuda_config(args: argparse.Namespace, device: torch.device) -> dict:
+    config = CUDA_OPT_PROFILES[args.cuda_opt_profile].copy()
+    if args.tf32 is not None:
+        config["tf32"] = args.tf32
+    if args.cudnn_benchmark is not None:
+        config["cudnn_benchmark"] = args.cudnn_benchmark
+    if args.amp is not None:
+        config["amp"] = args.amp
+    config.setdefault("tf32", None)
+    config.setdefault("cudnn_benchmark", None)
+    config.setdefault("amp", "off")
+    if device.type != "cuda":
+        config["amp"] = "off"
+    return config
+
+
+def apply_cuda_config(config: dict) -> None:
+    if config["tf32"] is not None:
+        torch.backends.cuda.matmul.allow_tf32 = bool(config["tf32"])
+        torch.backends.cudnn.allow_tf32 = bool(config["tf32"])
+    if config["cudnn_benchmark"] is not None:
+        torch.backends.cudnn.benchmark = bool(config["cudnn_benchmark"])
+
+
+def cuda_environment(device: torch.device) -> dict:
+    info = {
+        "torch_version": torch.__version__,
+        "torch_cuda_version": torch.version.cuda,
+        "cuda_available": torch.cuda.is_available(),
+        "cudnn_version": torch.backends.cudnn.version(),
+    }
+    if device.type == "cuda":
+        props = torch.cuda.get_device_properties(device)
+        info.update(
+            {
+                "device": torch.cuda.get_device_name(device),
+                "device_capability": list(torch.cuda.get_device_capability(device)),
+                "total_vram_gb": round(props.total_memory / (1024**3), 2),
+            }
+        )
+    return info
+
+
+def autocast_context(device: torch.device, amp_mode: str):
+    if device.type != "cuda" or amp_mode == "off":
+        return contextlib.nullcontext()
+    dtype = torch.bfloat16 if amp_mode == "bf16" else torch.float16
+    return torch.amp.autocast("cuda", dtype=dtype)
 
 
 def apply_preset_overrides(args: argparse.Namespace, argv: list[str]) -> None:
@@ -173,7 +251,7 @@ def make_loss_fn(binary: bool, class_weight=None):
 
 
 def batch_loss(model, batch, criterion, device, binary: bool, use_sample_weight: bool):
-    x_cat, x_num, lengths, x_manual, y, w = [b.to(device) for b in batch]
+    x_cat, x_num, lengths, x_manual, y, w = [b.to(device, non_blocking=True) for b in batch]
     logits = model(x_cat, x_num, lengths, x_manual)
     losses = criterion(logits.squeeze(1), y.float()) if binary else criterion(logits, y.long())
     if use_sample_weight:
@@ -186,7 +264,7 @@ def predict_probs(model, loader, device, binary: bool):
     probs_list, y_list, losses = [], [], []
     with torch.no_grad():
         for batch in loader:
-            x_cat, x_num, lengths, x_manual, y, _ = [b.to(device) for b in batch]
+            x_cat, x_num, lengths, x_manual, y, _ = [b.to(device, non_blocking=True) for b in batch]
             logits = model(x_cat, x_num, lengths, x_manual)
             probs = torch.sigmoid(logits.squeeze(1)).cpu().numpy() if binary else torch.softmax(logits, dim=1).cpu().numpy()
             probs_list.append(probs)
@@ -194,34 +272,51 @@ def predict_probs(model, loader, device, binary: bool):
     return np.concatenate(y_list), np.concatenate(probs_list)
 
 
-def train_one_fold(model, train_loader, valid_loader, args, device, binary: bool, class_weight=None):
+def train_one_fold(model, train_loader, valid_loader, args, device, binary: bool, cuda_config: dict, class_weight=None):
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     criterion = make_loss_fn(binary, class_weight)
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda" and cuda_config["amp"] == "fp16"))
     metric_name = early_stop_metric_name(args, binary)
     best_score = float("inf") if metric_name == "valid_loss" else -float("inf")
     best_loss = float("inf")
     best_epoch = 0
     best_state = None
     bad_epochs = 0
+    epoch_stats = []
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
 
     for epoch in range(1, args.epochs + 1):
         model.train()
         train_losses = []
+        measured_step_times = []
+        epoch_started = time.perf_counter()
         for batch in train_loader:
-            optimizer.zero_grad()
-            loss, _, _ = batch_loss(model, batch, criterion, device, binary, args.use_sample_weight)
+            optimizer.zero_grad(set_to_none=True)
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            step_started = time.perf_counter()
+            with autocast_context(device, cuda_config["amp"]):
+                loss, _, _ = batch_loss(model, batch, criterion, device, binary, args.use_sample_weight)
             train_losses.append(float(loss.item()))
-            loss.backward()
+            scaler.scale(loss).backward()
             if args.grad_clip and args.grad_clip > 0:
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            if len(train_losses) > args.benchmark_warmup_steps:
+                measured_step_times.append(time.perf_counter() - step_started)
 
         model.eval()
         valid_losses = []
         with torch.no_grad():
             for batch in valid_loader:
-                loss, _, _ = batch_loss(model, batch, criterion, device, binary, args.use_sample_weight)
+                with autocast_context(device, cuda_config["amp"]):
+                    loss, _, _ = batch_loss(model, batch, criterion, device, binary, args.use_sample_weight)
                 valid_losses.append(float(loss.item()))
 
         train_loss = float(np.mean(train_losses)) if train_losses else float("nan")
@@ -244,6 +339,19 @@ def train_one_fold(model, train_loader, valid_loader, args, device, binary: bool
             + (f" roc_auc={epoch_metrics['roc_auc']:.5f}" if binary and epoch_metrics.get("roc_auc") is not None else "")
             + f" best_{metric_name}={best_score:.5f}"
         )
+        measured_steps = len(measured_step_times)
+        epoch_seconds = time.perf_counter() - epoch_started
+        samples_per_second = (measured_steps * train_loader.batch_size / sum(measured_step_times)) if measured_step_times else None
+        epoch_stats.append(
+            {
+                "epoch": epoch,
+                "epoch_seconds": epoch_seconds,
+                "measured_steps": measured_steps,
+                "mean_step_seconds": float(np.mean(measured_step_times)) if measured_step_times else None,
+                "samples_per_second": samples_per_second,
+                "peak_vram_mb": (torch.cuda.max_memory_allocated(device) / (1024**2)) if device.type == "cuda" else None,
+            }
+        )
         if bad_epochs >= args.patience:
             break
 
@@ -251,7 +359,21 @@ def train_one_fold(model, train_loader, valid_loader, args, device, binary: bool
         best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
     model.load_state_dict(best_state)
     y_true, probs_raw = predict_probs(model, valid_loader, device, binary)
-    return best_state, best_epoch, best_loss, best_score, metric_name, y_true, to_prob_2d(probs_raw, binary)
+    return best_state, best_epoch, best_loss, best_score, metric_name, y_true, to_prob_2d(probs_raw, binary), epoch_stats
+
+
+def make_loader(dataset: Dataset, args: argparse.Namespace, shuffle: bool, device: torch.device) -> DataLoader:
+    persistent_workers = args.persistent_workers and args.num_workers > 0
+    kwargs = {
+        "batch_size": args.batch_size,
+        "shuffle": shuffle,
+        "num_workers": args.num_workers,
+        "pin_memory": args.pin_memory,
+        "persistent_workers": persistent_workers,
+    }
+    if args.num_workers > 0:
+        kwargs["prefetch_factor"] = args.prefetch_factor
+    return DataLoader(dataset, **kwargs)
 
 
 def main() -> None:
@@ -262,6 +384,11 @@ def main() -> None:
         torch.cuda.manual_seed_all(args.random_state)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    cuda_config = resolve_cuda_config(args, device)
+    apply_cuda_config(cuda_config)
+    env_info = cuda_environment(device)
+    print("CUDA environment:", json.dumps(env_info, ensure_ascii=False))
+    print("CUDA optimization config:", json.dumps(cuda_config, ensure_ascii=False))
     spec = TARGET_MAP[args.target]
     data = np.load(args.data, allow_pickle=True)
     meta_df = pd.read_csv(args.train_features, usecols=["sample_id"])
@@ -301,8 +428,8 @@ def main() -> None:
         x_train_num, x_valid_num, num_mean, num_std = standardize_seq_num(x_num[train_idx], x_num[valid_idx], lengths[train_idx], lengths[valid_idx])
         train_ds = RallyDataset(x_cat[train_idx], x_train_num, lengths[train_idx], x_train_manual, y[train_idx], weights[train_idx])
         valid_ds = RallyDataset(x_cat[valid_idx], x_valid_num, lengths[valid_idx], x_valid_manual, y[valid_idx], weights[valid_idx])
-        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
-        valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=False)
+        train_loader = make_loader(train_ds, args, shuffle=True, device=device)
+        valid_loader = make_loader(valid_ds, args, shuffle=False, device=device)
         model = make_model(x_cat, x_num, x_manual, args, 1 if spec["binary"] else output_dim, spec["binary"])
 
         class_weight = None
@@ -310,8 +437,8 @@ def main() -> None:
             counts = np.bincount(y[train_idx].astype(np.int64), minlength=output_dim)
             class_weight = torch.as_tensor(len(train_idx) / np.maximum(counts, 1) / output_dim, dtype=torch.float32, device=device)
 
-        best_state, best_epoch, best_valid_loss, best_score, metric_name, y_true, probs = train_one_fold(
-            model, train_loader, valid_loader, args, device, spec["binary"], class_weight
+        best_state, best_epoch, best_valid_loss, best_score, metric_name, y_true, probs, epoch_stats = train_one_fold(
+            model, train_loader, valid_loader, args, device, spec["binary"], cuda_config, class_weight
         )
         fold_metrics = {
             "fold": fold,
@@ -320,6 +447,7 @@ def main() -> None:
             "early_stop_metric": metric_name,
             "best_score": best_score,
             "valid_rows": int(len(valid_idx)),
+            "timing": epoch_stats,
             **evaluate_probs(y_true, probs, spec["binary"]),
         }
         metrics.append(fold_metrics)
@@ -347,13 +475,21 @@ def main() -> None:
     summary = {
         "target": args.target,
         "device": str(device),
+        "cuda_environment": env_info,
+        "cuda_config": cuda_config,
+        "dataloader": {
+            "num_workers": args.num_workers,
+            "pin_memory": args.pin_memory,
+            "prefetch_factor": args.prefetch_factor if args.num_workers > 0 else None,
+            "persistent_workers": args.persistent_workers and args.num_workers > 0,
+        },
         "use_sample_weight": args.use_sample_weight,
         "preset": args.preset,
         "folds": metrics,
         "fold_average": {
             key: float(np.mean([m[key] for m in metrics if m.get(key) is not None]))
             for key in metrics[0]
-            if key not in {"fold", "valid_rows", "best_epoch", "early_stop_metric"}
+            if key not in {"fold", "valid_rows", "best_epoch", "early_stop_metric", "timing"}
             and any(m.get(key) is not None for m in metrics)
         },
         "oof": evaluate_probs(y[valid_mask], oof_proba[valid_mask], spec["binary"]),
