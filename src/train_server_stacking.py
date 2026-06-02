@@ -68,14 +68,20 @@ def entropy_from_probs(probs: np.ndarray) -> np.ndarray:
     return -(safe * np.log(safe)).sum(axis=1)
 
 
-def add_probability_group(features: pd.DataFrame, group_name: str, probs: np.ndarray) -> None:
-    for idx in range(probs.shape[1]):
-        features[f"{group_name}_proba_{idx}"] = probs[:, idx]
+def add_probability_group(features: pd.DataFrame, group_name: str, probs: np.ndarray) -> pd.DataFrame:
+    """Return a defragmented frame with probability-derived features appended."""
+
     sorted_probs = np.sort(probs, axis=1)
-    features[f"{group_name}_argmax"] = probs.argmax(axis=1)
-    features[f"{group_name}_max_prob"] = probs.max(axis=1)
-    features[f"{group_name}_entropy"] = entropy_from_probs(probs)
-    features[f"{group_name}_top2_margin"] = sorted_probs[:, -1] - sorted_probs[:, -2]
+    columns = {f"{group_name}_proba_{idx}": probs[:, idx] for idx in range(probs.shape[1])}
+    columns.update(
+        {
+            f"{group_name}_argmax": probs.argmax(axis=1),
+            f"{group_name}_max_prob": probs.max(axis=1),
+            f"{group_name}_entropy": entropy_from_probs(probs),
+            f"{group_name}_top2_margin": sorted_probs[:, -1] - sorted_probs[:, -2],
+        }
+    )
+    return pd.concat([features, pd.DataFrame(columns, index=features.index)], axis=1).copy()
 
 
 def make_base_feature_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -182,7 +188,7 @@ def build_stacking_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], dic
         ("action_lstm", action_lstm),
         ("point_lstm", point_lstm),
     ]:
-        add_probability_group(features, name, probs)
+        features = add_probability_group(features, name, probs)
         added_groups.append(name)
 
     ensemble_summary = Path("reports/ensemble/summary.csv")
@@ -192,11 +198,11 @@ def build_stacking_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], dic
         point_weight = load_blend_weight(ensemble_summary, "pointId")
         if action_weight is not None:
             action_ensemble = normalize_probs(action_weight * action_lstm + (1.0 - action_weight) * action_tab, 19)
-            add_probability_group(features, "action_ensemble", action_ensemble)
+            features = add_probability_group(features, "action_ensemble", action_ensemble)
             added_groups.append("action_ensemble")
         if point_weight is not None:
             point_base_blend = normalize_probs(point_weight * point_lstm + (1.0 - point_weight) * point_tab, 10)
-            add_probability_group(features, "point_ensemble", point_base_blend)
+            features = add_probability_group(features, "point_ensemble", point_base_blend)
             added_groups.append("point_ensemble")
 
     point_phase_weight = 0.40
@@ -204,7 +210,7 @@ def build_stacking_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], dic
     point_phase_path = Path("reports/point_phase/pointId_oof_proba.npy")
     if point_phase_path.exists():
         point_phase = require_probs(point_phase_path, 10, n_rows)
-        add_probability_group(features, "point_phase", point_phase)
+        features = add_probability_group(features, "point_phase", point_phase)
         added_groups.append("point_phase")
         if point_phase_summary_path.exists():
             point_phase_summary = json.loads(point_phase_summary_path.read_text(encoding="utf-8"))
@@ -215,7 +221,7 @@ def build_stacking_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], dic
             )
         if point_base_blend is not None:
             point_phase_blend = normalize_probs(point_phase_weight * point_phase + (1.0 - point_phase_weight) * point_base_blend, 10)
-            add_probability_group(features, "point_phase_blend", point_phase_blend)
+            features = add_probability_group(features, "point_phase_blend", point_phase_blend)
             added_groups.append("point_phase_blend")
 
     summary = {

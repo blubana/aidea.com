@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth", type=int, default=6)
     parser.add_argument("--early-stopping-rounds", type=int, default=80)
     parser.add_argument("--task-type", default="CPU", choices=["CPU", "GPU"])
+    parser.add_argument("--eval-metric", default="auto", help="CatBoost eval metric; auto uses GPU-safe Logloss for binary GPU runs.")
     parser.add_argument("--sample", type=int, default=0)
     parser.add_argument("--targets", nargs="+", default=list(TARGETS), choices=list(TARGETS))
     parser.add_argument("--random-state", type=int, default=42)
@@ -95,19 +96,24 @@ def cat_feature_indices(x: pd.DataFrame) -> list[int]:
 
 def make_model(args: argparse.Namespace, target: str) -> CatBoostClassifier:
     spec = TARGETS[target]
+    if args.eval_metric != "auto":
+        eval_metric = args.eval_metric
+    elif spec["binary"] and args.task_type == "GPU":
+        # CatBoost cannot compute AUC as a GPU eval metric; compute AUC later on CPU from predictions.
+        eval_metric = "Logloss"
+    else:
+        eval_metric = "AUC" if spec["binary"] else "MultiClass"
     params = {
         "iterations": args.iterations,
         "learning_rate": args.learning_rate,
         "depth": args.depth,
         "random_seed": args.random_state,
         "loss_function": "Logloss" if spec["binary"] else "MultiClass",
-        "eval_metric": "AUC" if spec["binary"] else "MultiClass",
+        "eval_metric": eval_metric,
         "task_type": args.task_type,
         "verbose": False,
         "allow_writing_files": False,
     }
-    if not spec["binary"]:
-        params["classes_count"] = len(spec["classes"])
     return CatBoostClassifier(**params)
 
 
@@ -209,6 +215,8 @@ def main() -> None:
             "features": int(x_train.shape[1]),
             "categorical_features": int(len(cat_idx)),
             "use_sample_weight": bool(train_weights is not None),
+            "task_type": args.task_type,
+            "eval_metric": make_model(args, target).get_param("eval_metric"),
             "forbidden_feature_check": sorted([c for c in x_train.columns if c in DROP_COLUMNS]),
             **metric_bundle(train_df, target, y, oof_proba),
             "folds_detail": fold_rows,

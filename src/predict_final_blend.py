@@ -246,7 +246,7 @@ def build_server_stacking_test_frame(
         ("point_phase", point_phase),
         ("point_phase_blend", point_phase_blend),
     ]:
-        add_probability_group(x, name, probs)
+        x = add_probability_group(x, name, probs)
     forbidden_present = [c for c in x.columns if c in FORBIDDEN_FEATURES]
     if forbidden_present:
         raise ValueError(f"Forbidden features in server stacking test frame: {forbidden_present}")
@@ -266,23 +266,23 @@ def build_point_stacking_test_frame(
     point_cat: np.ndarray,
 ) -> pd.DataFrame:
     x = make_base_feature_frame(test_features)
-    add_probability_group(x, "action_tabular", action_tab)
-    add_probability_group(x, "action_lstm", action_lstm)
-    add_probability_group(x, "action_catboost", action_cat)
-    add_probability_group(x, "action_ensemble", action_ensemble)
+    x = add_probability_group(x, "action_tabular", action_tab)
+    x = add_probability_group(x, "action_lstm", action_lstm)
+    x = add_probability_group(x, "action_catboost", action_cat)
+    x = add_probability_group(x, "action_ensemble", action_ensemble)
     if action_phase is not None:
-        add_probability_group(x, "action_phase", action_phase)
+        x = add_probability_group(x, "action_phase", action_phase)
         action_adjusted = normalize_probs((1.0 - FINAL_WEIGHTS["action_phase"]) * action_ensemble + FINAL_WEIGHTS["action_phase"] * action_phase, 19)
-        add_probability_group(x, "action_adjusted", action_adjusted)
+        x = add_probability_group(x, "action_adjusted", action_adjusted)
     point_base = normalize_probs(0.35 * point_tab + 0.65 * point_lstm, 10)
-    add_probability_group(x, "point_tabular", point_tab)
-    add_probability_group(x, "point_lstm", point_lstm)
-    add_probability_group(x, "point_phase", point_phase)
-    add_probability_group(x, "point_catboost", point_cat)
-    add_probability_group(x, "point_base", point_base)
+    x = add_probability_group(x, "point_tabular", point_tab)
+    x = add_probability_group(x, "point_lstm", point_lstm)
+    x = add_probability_group(x, "point_phase", point_phase)
+    x = add_probability_group(x, "point_catboost", point_cat)
+    x = add_probability_group(x, "point_base", point_base)
     point_current = normalize_probs(0.60 * point_base + 0.40 * point_phase, 10)
     point_current = normalize_probs(0.70 * point_current + 0.30 * point_cat, 10)
-    add_probability_group(x, "point_current", point_current)
+    x = add_probability_group(x, "point_current", point_current)
     forbidden_present = [c for c in x.columns if c in FORBIDDEN_FEATURES]
     if forbidden_present:
         raise ValueError(f"Forbidden features in point stacking test frame: {forbidden_present}")

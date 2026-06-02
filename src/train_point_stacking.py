@@ -84,7 +84,8 @@ def build_stacking_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], dic
         if not p.exists():
             return None
         probs = require_probs(p, dim, n_rows)
-        add_probability_group(features, name, probs)
+        nonlocal features
+        features = add_probability_group(features, name, probs)
         added_groups.append(name)
         return probs
 
@@ -102,7 +103,7 @@ def build_stacking_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], dic
         action_ensemble = normalize_probs(0.70 * action_tab + 0.30 * action_lstm, 19)
         if action_cat is not None:
             action_ensemble = normalize_probs(0.85 * action_ensemble + 0.15 * action_cat, 19)
-        add_probability_group(features, "action_ensemble", action_ensemble)
+        features = add_probability_group(features, "action_ensemble", action_ensemble)
         added_groups.append("action_ensemble")
 
     if action_phase is not None and action_ensemble is not None:
@@ -115,19 +116,19 @@ def build_stacking_frame(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], dic
                 .get("weight_action_phase", action_phase_weight)
             )
         action_adjusted = normalize_probs((1.0 - action_phase_weight) * action_ensemble + action_phase_weight * action_phase, 19)
-        add_probability_group(features, "action_adjusted", action_adjusted)
+        features = add_probability_group(features, "action_adjusted", action_adjusted)
         added_groups.append("action_adjusted")
 
     if point_tab is not None and point_lstm is not None:
         point_base = normalize_probs(0.35 * point_tab + 0.65 * point_lstm, 10)
-        add_probability_group(features, "point_base", point_base)
+        features = add_probability_group(features, "point_base", point_base)
         added_groups.append("point_base")
         point_current = point_base
         if point_phase is not None:
             point_current = normalize_probs(0.60 * point_base + 0.40 * point_phase, 10)
         if point_cat is not None:
             point_current = normalize_probs(0.70 * point_current + 0.30 * point_cat, 10)
-        add_probability_group(features, "point_current", point_current)
+        features = add_probability_group(features, "point_current", point_current)
         added_groups.append("point_current")
 
     summary = {
