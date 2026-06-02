@@ -117,6 +117,17 @@ def make_model(args: argparse.Namespace, target: str) -> CatBoostClassifier:
     return CatBoostClassifier(**params)
 
 
+def can_use_eval_set(args: argparse.Namespace, target: str, y_train: np.ndarray, y_valid: np.ndarray) -> tuple[bool, list[int]]:
+    """CatBoost GPU multiclass cannot evaluate labels unseen in the learn pool."""
+
+    spec = TARGETS[target]
+    if args.task_type != "GPU" or spec["binary"]:
+        return True, []
+    train_classes = set(np.unique(y_train).astype(int))
+    missing = sorted(int(cls) for cls in np.unique(y_valid).astype(int) if int(cls) not in train_classes)
+    return not missing, missing
+
+
 def metric_bundle(df: pd.DataFrame, target: str, y_true: np.ndarray, probs: np.ndarray) -> dict[str, float]:
     pred = probs.argmax(axis=1)
     weights = df["sample_weight"].to_numpy(dtype=float) if "sample_weight" in df else np.ones(len(df), dtype=float)
@@ -180,8 +191,17 @@ def main() -> None:
             model = make_model(args, target)
             train_pool = Pool(x_train.iloc[train_idx], y[train_idx], cat_features=cat_idx, weight=None if train_weights is None else train_weights[train_idx])
             valid_pool = Pool(x_train.iloc[valid_idx], y[valid_idx], cat_features=cat_idx, weight=None if train_weights is None else train_weights[valid_idx])
-            model.fit(train_pool, eval_set=valid_pool, use_best_model=True, early_stopping_rounds=args.early_stopping_rounds)
-            proba = align_model_probs(model, model.predict_proba(valid_pool), spec["classes"])
+            use_eval_set, missing_eval_classes = can_use_eval_set(args, target, y[train_idx], y[valid_idx])
+            if use_eval_set:
+                model.fit(train_pool, eval_set=valid_pool, use_best_model=True, early_stopping_rounds=args.early_stopping_rounds)
+            else:
+                print(
+                    f"{target} fold {fold}: disabling CatBoost GPU eval_set because validation has "
+                    f"classes absent from train: {missing_eval_classes}"
+                )
+                model.fit(train_pool, verbose=False)
+            valid_predict_pool = Pool(x_train.iloc[valid_idx], cat_features=cat_idx)
+            proba = align_model_probs(model, model.predict_proba(valid_predict_pool), spec["classes"])
             oof_proba[valid_idx] = proba
             pred = proba.argmax(axis=1)
             row = {
@@ -190,6 +210,8 @@ def main() -> None:
                 "accuracy": float(accuracy_score(y[valid_idx], pred)),
                 "macro_f1": float(f1_score(y[valid_idx], pred, average="macro", zero_division=0)),
                 "log_loss": float(log_loss(y[valid_idx], proba, labels=spec["classes"])),
+                "used_eval_set": use_eval_set,
+                "missing_eval_classes_in_train": missing_eval_classes,
             }
             if spec["binary"] and len(np.unique(y[valid_idx])) > 1:
                 row["roc_auc"] = float(roc_auc_score(y[valid_idx], proba[:, 1]))
